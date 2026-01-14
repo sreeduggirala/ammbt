@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional, Union
 
 from ammbt.amms.univ2 import UniswapV2Simulator
 from ammbt.amms.univ3 import UniswapV3Simulator
+from ammbt.amms.dlmm import MeteoraLMMSimulator
 from ammbt.portfolio.analytics import calculate_metrics, calculate_capital_efficiency
 from ammbt.base.array_wrapper import ArrayWrapper
 
@@ -25,6 +26,15 @@ STRATEGY_PARAM_DTYPE_V3 = np.dtype([
     ('initial_capital', 'f8'),
     ('tick_lower', 'i4'),
     ('tick_upper', 'i4'),
+    ('rebalance_threshold', 'f8'),
+    ('rebalance_frequency', 'i4'),
+])
+
+STRATEGY_PARAM_DTYPE_DLMM = np.dtype([
+    ('initial_capital', 'f8'),
+    ('bin_lower', 'i4'),
+    ('bin_upper', 'i4'),
+    ('liquidity_shape', 'i4'),  # 0=Spot, 1=Curve, 2=Bid-Ask
     ('rebalance_threshold', 'f8'),
     ('rebalance_frequency', 'i4'),
 ])
@@ -174,6 +184,8 @@ class LPBacktester:
             self.simulator = UniswapV2Simulator(**amm_params)
         elif amm_type == 'v3':
             self.simulator = UniswapV3Simulator(**amm_params)
+        elif amm_type == 'dlmm':
+            self.simulator = MeteoraLMMSimulator(**amm_params)
         else:
             raise NotImplementedError(f"AMM type '{amm_type}' not yet implemented")
 
@@ -234,6 +246,14 @@ class LPBacktester:
             strategy_params['initial_capital'] = strategy_df['initial_capital'].values
             strategy_params['tick_lower'] = strategy_df['tick_lower'].values
             strategy_params['tick_upper'] = strategy_df['tick_upper'].values
+            strategy_params['rebalance_threshold'] = strategy_df.get('rebalance_threshold', 0.0).values
+            strategy_params['rebalance_frequency'] = strategy_df.get('rebalance_frequency', 0).values
+        elif self.amm_type == 'dlmm':
+            strategy_params = np.zeros(n_strategies, dtype=STRATEGY_PARAM_DTYPE_DLMM)
+            strategy_params['initial_capital'] = strategy_df['initial_capital'].values
+            strategy_params['bin_lower'] = strategy_df['bin_lower'].values
+            strategy_params['bin_upper'] = strategy_df['bin_upper'].values
+            strategy_params['liquidity_shape'] = strategy_df.get('liquidity_shape', 0).values
             strategy_params['rebalance_threshold'] = strategy_df.get('rebalance_threshold', 0.0).values
             strategy_params['rebalance_frequency'] = strategy_df.get('rebalance_frequency', 0).values
         else:
