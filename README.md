@@ -85,13 +85,66 @@ amm.plot_performance(results, strategy_idx=0).show()
 
 See `examples/uniswap_v2_demo.ipynb` for full walkthrough.
 
+## Using Real Swap Data
+
+Historical swap data loaders are available for Uniswap V2/V3 (The Graph),
+and Solana venues like Meteora and Raydium (Birdeye APIs). Install the
+optional data dependencies first:
+
+```bash
+pip install -e ".[data]"
+```
+
+```python
+import time
+import ammbt as amm
+from ammbt.data import UniswapV3Loader
+
+loader = UniswapV3Loader(network="ethereum")
+data = loader.load(
+    "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8",
+    start_time=1700000000,
+    end_time=1700500000,
+    limit=20000,
+)
+swaps = data.to_backtest_format()
+
+bt = amm.LPBacktester(amm_type="v3", fee_rate=0.003)
+results = bt.run(swaps, strategies)
+```
+
+## Live Swap Streaming (Polling)
+
+Loaders can also poll their data sources and stream new swaps. This is
+useful for near-real-time simulation or building a rolling dataset.
+
+```python
+import time
+import ammbt as amm
+from ammbt.data import UniswapV2Loader
+
+loader = UniswapV2Loader(network="ethereum")
+stream = loader.stream_swaps(
+    "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
+    start_time=int(time.time()) - 3600,
+    poll_interval=5.0,
+    batch_limit=500,
+)
+
+for batch in stream:
+    # batch is normalized swaps with timestamp/amount0/amount1/tx_hash
+    swaps = batch  # accumulate and backtest as desired
+    break
+```
+
 ## Project Status
 
 - [x] Architecture design
 - [x] Uniswap v2 implementation (COMPLETE)
 - [x] Uniswap v3 implementation (COMPLETE)
 - [ ] Meteora DLMM implementation
-- [ ] Data loaders for real swap data
+- [x] Data loaders for real swap data (The Graph/Birdeye)
+- [x] Live swap polling via loader streaming
 - [ ] Record system for event tracking
 
 ## License
