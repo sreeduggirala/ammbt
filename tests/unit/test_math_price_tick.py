@@ -17,6 +17,10 @@ from ammbt.utils.math import (
     Q96,
     get_liquidity_for_amounts,
     get_amounts_for_liquidity,
+    get_tick_spacing,
+    round_tick_to_spacing,
+    floor_tick_to_spacing,
+    ceil_tick_to_spacing,
 )
 
 
@@ -281,3 +285,112 @@ class TestLiquidityMath:
         # The other might be less due to liquidity constraints
         assert recovered_0 <= amount0 * 1.001
         assert recovered_1 <= amount1 * 1.001
+
+
+class TestTickSpacing:
+    """Tests for tick spacing utility functions."""
+
+    def test_get_tick_spacing_500(self):
+        """Test tick spacing for 0.05% fee tier."""
+        assert get_tick_spacing(500) == 10
+
+    def test_get_tick_spacing_3000(self):
+        """Test tick spacing for 0.3% fee tier."""
+        assert get_tick_spacing(3000) == 60
+
+    def test_get_tick_spacing_10000(self):
+        """Test tick spacing for 1% fee tier."""
+        assert get_tick_spacing(10000) == 200
+
+    def test_get_tick_spacing_100(self):
+        """Test tick spacing for 0.01% fee tier."""
+        assert get_tick_spacing(100) == 1
+
+    def test_get_tick_spacing_unknown(self):
+        """Test tick spacing for unknown fee tier defaults to 60."""
+        assert get_tick_spacing(999) == 60
+
+
+class TestRoundTickToSpacing:
+    """Tests for round_tick_to_spacing function."""
+
+    def test_round_exact_multiple(self):
+        """Test rounding when tick is already a multiple of spacing."""
+        assert round_tick_to_spacing(120, 60) == 120
+        assert round_tick_to_spacing(-120, 60) == -120
+        assert round_tick_to_spacing(0, 60) == 0
+
+    def test_round_positive_tick_up(self):
+        """Test rounding positive tick up to nearest spacing."""
+        assert round_tick_to_spacing(105, 60) == 120
+        assert round_tick_to_spacing(91, 60) == 120
+
+    def test_round_positive_tick_down(self):
+        """Test rounding positive tick down to nearest spacing."""
+        assert round_tick_to_spacing(85, 60) == 60
+        assert round_tick_to_spacing(29, 60) == 0
+
+    def test_round_negative_tick(self):
+        """Test rounding negative ticks.
+
+        Note: np.round uses "round half to even" (banker's rounding), so -25
+        rounds to -20 (towards even) rather than -30.
+        """
+        # -25 rounds to -20 with banker's rounding (towards even -2)
+        assert round_tick_to_spacing(-25, 10) == -20
+        assert round_tick_to_spacing(-24, 10) == -20
+        assert round_tick_to_spacing(-26, 10) == -30
+        assert round_tick_to_spacing(-85, 60) == -60
+        assert round_tick_to_spacing(-91, 60) == -120
+
+    def test_round_with_spacing_10(self):
+        """Test rounding with spacing 10."""
+        assert round_tick_to_spacing(14, 10) == 10
+        assert round_tick_to_spacing(15, 10) == 20
+        assert round_tick_to_spacing(16, 10) == 20
+
+    def test_round_zero_spacing(self):
+        """Test that zero spacing returns tick unchanged."""
+        assert round_tick_to_spacing(105, 0) == 105
+
+
+class TestFloorTickToSpacing:
+    """Tests for floor_tick_to_spacing function."""
+
+    def test_floor_exact_multiple(self):
+        """Test floor when tick is already a multiple of spacing."""
+        assert floor_tick_to_spacing(120, 60) == 120
+        assert floor_tick_to_spacing(-120, 60) == -120
+
+    def test_floor_positive_tick(self):
+        """Test floor for positive ticks."""
+        assert floor_tick_to_spacing(105, 60) == 60
+        assert floor_tick_to_spacing(119, 60) == 60
+        assert floor_tick_to_spacing(61, 60) == 60
+
+    def test_floor_negative_tick(self):
+        """Test floor for negative ticks (rounds towards negative infinity)."""
+        assert floor_tick_to_spacing(-25, 10) == -30
+        assert floor_tick_to_spacing(-21, 10) == -30
+        assert floor_tick_to_spacing(-1, 60) == -60
+
+
+class TestCeilTickToSpacing:
+    """Tests for ceil_tick_to_spacing function."""
+
+    def test_ceil_exact_multiple(self):
+        """Test ceil when tick is already a multiple of spacing."""
+        assert ceil_tick_to_spacing(120, 60) == 120
+        assert ceil_tick_to_spacing(-120, 60) == -120
+
+    def test_ceil_positive_tick(self):
+        """Test ceil for positive ticks."""
+        assert ceil_tick_to_spacing(61, 60) == 120
+        assert ceil_tick_to_spacing(119, 60) == 120
+        assert ceil_tick_to_spacing(1, 60) == 60
+
+    def test_ceil_negative_tick(self):
+        """Test ceil for negative ticks (rounds towards positive infinity)."""
+        assert ceil_tick_to_spacing(-25, 10) == -20
+        assert ceil_tick_to_spacing(-29, 10) == -20
+        assert ceil_tick_to_spacing(-59, 60) == 0

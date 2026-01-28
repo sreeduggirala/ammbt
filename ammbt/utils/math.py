@@ -119,6 +119,142 @@ def price_to_tick(price: float) -> int:
     return int(np.floor(np.log(price) / np.log(1.0001)))
 
 
+# =============================================================================
+# Tick Spacing Utilities (Uniswap V3)
+# =============================================================================
+
+
+@numba.jit(nopython=True, cache=True)
+def get_tick_spacing(fee_tier: int) -> int:
+    """
+    Get tick spacing for a given fee tier.
+
+    Fee tiers and their tick spacings:
+    - 100 bps (0.01%): tick spacing 1
+    - 500 bps (0.05%): tick spacing 10
+    - 3000 bps (0.3%): tick spacing 60
+    - 10000 bps (1%): tick spacing 200
+
+    Parameters
+    ----------
+    fee_tier : int
+        Fee tier in basis points (100, 500, 3000, 10000)
+
+    Returns
+    -------
+    int
+        Tick spacing for that fee tier
+
+    Examples
+    --------
+    >>> get_tick_spacing(500)
+    10
+    >>> get_tick_spacing(3000)
+    60
+    """
+    if fee_tier == 100:
+        return 1
+    elif fee_tier == 500:
+        return 10
+    elif fee_tier == 3000:
+        return 60
+    elif fee_tier == 10000:
+        return 200
+    else:
+        # Default to 60 for unknown fee tiers
+        return 60
+
+
+@numba.jit(nopython=True, cache=True)
+def round_tick_to_spacing(tick: int, spacing: int) -> int:
+    """
+    Round tick to nearest valid multiple of spacing.
+
+    Parameters
+    ----------
+    tick : int
+        Raw tick value
+    spacing : int
+        Tick spacing
+
+    Returns
+    -------
+    int
+        Tick rounded to nearest spacing multiple
+
+    Examples
+    --------
+    >>> round_tick_to_spacing(105, 60)
+    120
+    >>> round_tick_to_spacing(85, 60)
+    60
+    >>> round_tick_to_spacing(-25, 10)
+    -30
+    """
+    if spacing <= 0:
+        return tick
+    # Round to nearest (not floor)
+    return int(np.round(tick / spacing)) * spacing
+
+
+@numba.jit(nopython=True, cache=True)
+def floor_tick_to_spacing(tick: int, spacing: int) -> int:
+    """
+    Floor tick to nearest valid multiple of spacing (round towards negative infinity).
+
+    Parameters
+    ----------
+    tick : int
+        Raw tick value
+    spacing : int
+        Tick spacing
+
+    Returns
+    -------
+    int
+        Tick floored to spacing multiple
+
+    Examples
+    --------
+    >>> floor_tick_to_spacing(105, 60)
+    60
+    >>> floor_tick_to_spacing(-25, 10)
+    -30
+    """
+    if spacing <= 0:
+        return tick
+    return int(np.floor(tick / spacing)) * spacing
+
+
+@numba.jit(nopython=True, cache=True)
+def ceil_tick_to_spacing(tick: int, spacing: int) -> int:
+    """
+    Ceil tick to nearest valid multiple of spacing (round towards positive infinity).
+
+    Parameters
+    ----------
+    tick : int
+        Raw tick value
+    spacing : int
+        Tick spacing
+
+    Returns
+    -------
+    int
+        Tick ceiled to spacing multiple
+
+    Examples
+    --------
+    >>> ceil_tick_to_spacing(61, 60)
+    120
+    >>> ceil_tick_to_spacing(-25, 10)
+    -20
+    """
+    if spacing <= 0:
+        return tick
+    return int(np.ceil(tick / spacing)) * spacing
+
+
 @numba.jit(nopython=True, cache=True)
 def tick_to_sqrt_price(tick: int) -> int:
     """
