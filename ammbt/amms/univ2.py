@@ -129,9 +129,10 @@ def _simulate_v2_swaps_nb(
             positions[i, j]['token0_balance'] = liquidity_share * reserve0
             positions[i, j]['token1_balance'] = liquidity_share * reserve1
 
-            # Accumulate fees (proportional to liquidity share)
-            # Fee is already taken from swap, it stays in pool
-            # LP's value increases as reserves grow relative to k
+            # Track fees for analytics (already included in reserve growth)
+            # In V2, fees stay in the pool and are auto-compounded into LP value.
+            # These fields track cumulative fee history, NOT additional value.
+            # LP value is fully captured by token0_balance and token1_balance.
             if amount0_in > 0:
                 fee_amount = amount0_in * fee_rate
                 positions[i, j]['uncollected_fees_0'] += fee_amount * liquidity_share
@@ -247,6 +248,11 @@ class UniswapV2Simulator(BaseAMMSimulator):
             self.pool_params["initial_reserve1"] / self.pool_params["initial_reserve0"]
         )
 
+        # Calculate initial pool's total supply (sqrt of initial k)
+        initial_reserve0 = self.pool_params["initial_reserve0"]
+        initial_reserve1 = self.pool_params["initial_reserve1"]
+        initial_total_supply = np.sqrt(initial_reserve0 * initial_reserve1)
+
         for j in range(n_strategies):
             capital = strategy_params[j]['initial_capital']
 
@@ -254,9 +260,11 @@ class UniswapV2Simulator(BaseAMMSimulator):
             amount0 = capital / 2.0 / initial_price  # token0
             amount1 = capital / 2.0  # token1 (assuming token1 is USD)
 
-            # Calculate liquidity tokens
-            # L = sqrt(amount0 * amount1)
-            liquidity = np.sqrt(amount0 * amount1)
+            # Calculate liquidity tokens for adding to existing pool
+            # L = min(amount0 * total_supply / reserve0, amount1 * total_supply / reserve1)
+            liquidity_from_0 = amount0 * initial_total_supply / initial_reserve0
+            liquidity_from_1 = amount1 * initial_total_supply / initial_reserve1
+            liquidity = min(liquidity_from_0, liquidity_from_1)
 
             # Set initial position
             positions[0, j]['liquidity'] = liquidity

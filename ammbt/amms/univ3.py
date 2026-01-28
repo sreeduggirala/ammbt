@@ -180,31 +180,36 @@ def _simulate_v3_swaps_nb(
         amount1_in = max(0.0, swap_amounts_1[i])
 
         if amount0_in > 0 and liquidity > 0:
-            # Swapping token0 for token1
-            # Calculate price impact
+            # Swapping token0 for token1 (exactInput token0)
+            # From Uniswap V3 whitepaper:
+            # new_sqrt_price = (L * sqrt_price) / (L + amount0 * sqrt_price)
             fee_amount = amount0_in * fee_rate
             amount0_after_fee = amount0_in - fee_amount
 
-            # Simplified swap math (exact would require tick crossing)
-            # ΔsqrtP = Δy / L (for token1 out)
-            # For small swaps, approximate
-            sqrt_price_delta = amount0_after_fee / liquidity
-            new_sqrt_price = sqrt_price_x96 + sqrt_price_delta * Q96_FLOAT
+            # Correct V3 swap formula for token0 -> token1
+            sqrt_price = sqrt_price_x96 / Q96_FLOAT
+            if liquidity + amount0_after_fee * sqrt_price > 0:
+                new_sqrt_price_raw = (liquidity * sqrt_price) / (liquidity + amount0_after_fee * sqrt_price)
+                new_sqrt_price = new_sqrt_price_raw * Q96_FLOAT
+            else:
+                new_sqrt_price = sqrt_price_x96
 
             # Update fee growth
-            if liquidity > 0:
-                fee_growth_global_0 += fee_amount / liquidity
+            fee_growth_global_0 += fee_amount / liquidity
 
         elif amount1_in > 0 and liquidity > 0:
-            # Swapping token1 for token0
+            # Swapping token1 for token0 (exactInput token1)
+            # From Uniswap V3 whitepaper:
+            # new_sqrt_price = sqrt_price + amount1 / L
             fee_amount = amount1_in * fee_rate
             amount1_after_fee = amount1_in - fee_amount
 
-            sqrt_price_delta = -amount1_after_fee / liquidity
-            new_sqrt_price = sqrt_price_x96 + sqrt_price_delta * Q96_FLOAT
+            # Correct V3 swap formula for token1 -> token0
+            sqrt_price = sqrt_price_x96 / Q96_FLOAT
+            new_sqrt_price_raw = sqrt_price + amount1_after_fee / liquidity
+            new_sqrt_price = new_sqrt_price_raw * Q96_FLOAT
 
-            if liquidity > 0:
-                fee_growth_global_1 += fee_amount / liquidity
+            fee_growth_global_1 += fee_amount / liquidity
         else:
             new_sqrt_price = sqrt_price_x96
 
