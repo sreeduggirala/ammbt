@@ -1,0 +1,442 @@
+---
+title: "Strategy Optimization"
+description: "Systematically find optimal LP strategy parameters"
+---
+
+# Strategy Optimization
+
+This tutorial covers techniques for finding optimal LP strategy parameters using ammBT. You'll learn how to design effective parameter sweeps, analyze results, and avoid common pitfalls.
+
+## The Optimization Problem
+
+Finding the best LP strategy involves:
+
+1. **Defining the objective**: What are you optimizing for?
+2. **Choosing parameters to vary**: Which knobs to turn?
+3. **Designing the search**: Grid search vs. targeted approaches
+4. **Analyzing results**: Identifying robust strategies
+
+## Step 1: Define Your Objective
+
+Different objectives lead to different optimal strategies:
+
+| Objective | Metric to Optimize |
+|-----------|-------------------|
+| Maximum profit | `net_pnl` |
+| Best risk-adjusted return | `sharpe` |
+| Lowest risk | `max_drawdown_pct` (minimize) |
+| Most fee income | `total_fees_earned` |
+| Highest efficiency | `total_return_pct / time_in_position` |
+
+```python
+import ammbt as amm
+
+# Run backtest
+swaps = amm.generate_swaps(n_swaps=10000, price_volatility=0.03, seed=42)
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+result = bt.run(swaps, strategies)
+
+# Different optimal strategies by objective
+best_by_pnl = result.metrics.loc[result.metrics['net_pnl'].idxmax()]
+best_by_sharpe = result.metrics.loc[result.metrics['sharpe'].idxmax()]
+best_by_drawdown = result.metrics.loc[result.metrics['max_drawdown_pct'].idxmin()]
+```
+
+## Step 2: Grid Search
+
+The simplest approach: test every combination of parameters.
+
+### Designing the Grid
+
+```python
+# V3 strategy grid
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': [-100, -200, -400, -600, -800],
+    'tick_upper': [100, 200, 400, 600, 800],
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.10, 0.15],
+    'rebalance_frequency': [0, 100, 200, 500],
+}
+
+# Total combinations
+n_strategies = 3 * 5 * 5 * 5 * 4  # = 1500
+print(f"Testing {n_strategies} strategy combinations")
+```
+
+### Running the Grid Search
+
+```python
+result = bt.run(swaps, strategies)
+
+# Find optimal for each objective
+print("Optimal Strategies by Objective:\n")
+
+for metric, ascending in [
+    ('net_pnl', False),
+    ('sharpe', False),
+    ('max_drawdown_pct', True),
+]:
+    best_idx = result.metrics[metric].idxmax() if not ascending else result.metrics[metric].idxmin()
+    best = result.metrics.loc[best_idx]
+
+    print(f"{metric}:")
+    print(f"  Capital: ${best['initial_capital']:,.0f}")
+    print(f"  Range: [{best['tick_lower']}, {best['tick_upper']}]")
+    print(f"  Rebalance: {best['rebalance_threshold']:.0%} / {best['rebalance_frequency']} swaps")
+    print(f"  Value: {best[metric]:.2f}\n")
+```
+
+## Step 3: Visualize Parameter Sensitivity
+
+### Heatmaps for 2D Analysis
+
+```python
+# How do tick bounds affect Sharpe?
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='tick_upper',
+    y_param='tick_lower',
+    metric='sharpe'
+)
+fig.update_layout(title='Sharpe Ratio by Range')
+fig.show()
+```
+
+### Slice Analysis
+
+When you have more than 2 parameters, slice the data:
+
+```python
+import plotly.express as px
+
+# Filter to single capital amount
+subset = result.metrics[result.metrics['initial_capital'] == 25000]
+
+# Create heatmap for this slice
+fig = px.density_heatmap(
+    subset,
+    x='rebalance_threshold',
+    y='rebalance_frequency',
+    z='net_pnl',
+    histfunc='avg',
+    title='Net PnL by Rebalance Parameters (Capital=$25K)'
+)
+fig.show()
+```
+
+### Parameter Importance
+
+```python
+# Which parameter has the biggest impact?
+import numpy as np
+
+params = ['initial_capital', 'tick_lower', 'tick_upper',
+          'rebalance_threshold', 'rebalance_frequency']
+
+importance = {}
+for param in params:
+    # Group by parameter and measure variance in returns
+    grouped = result.metrics.groupby(param)['total_return_pct']
+    # Between-group variance / total variance
+    importance[param] = grouped.mean().var() / result.metrics['total_return_pct'].var()
+
+# Sort by importance
+importance = dict(sorted(importance.items(), key=lambda x: -x[1]))
+print("Parameter Importance:")
+for param, imp in importance.items():
+    print(f"  {param}: {imp:.2%}")
+```
+
+## Step 4: Advanced Optimization Techniques
+
+### Iterative Refinement
+
+Start coarse, then refine around promising regions:
+
+```python
+# Phase 1: Coarse grid
+coarse_strategies = {
+    'tick_lower': [-100, -300, -500, -700],
+    'tick_upper': [100, 300, 500, 700],
+    'rebalance_threshold': [0.0, 0.05, 0.10, 0.15],
+}
+
+result_coarse = bt.run(swaps, coarse_strategies)
+best_coarse = result_coarse.summary().iloc[0]
+
+print(f"Best coarse params:")
+print(f"  tick_lower: {best_coarse['tick_lower']}")
+print(f"  tick_upper: {best_coarse['tick_upper']}")
+print(f"  rebalance_threshold: {best_coarse['rebalance_threshold']}")
+
+# Phase 2: Fine grid around best
+fine_strategies = {
+    'tick_lower': [best_coarse['tick_lower'] + d for d in [-50, -25, 0, 25, 50]],
+    'tick_upper': [best_coarse['tick_upper'] + d for d in [-50, -25, 0, 25, 50]],
+    'rebalance_threshold': [best_coarse['rebalance_threshold'] + d
+                           for d in [-0.02, -0.01, 0, 0.01, 0.02]],
+}
+
+result_fine = bt.run(swaps, fine_strategies)
+best_fine = result_fine.summary().iloc[0]
+
+print(f"\nRefined optimal params:")
+print(f"  tick_lower: {best_fine['tick_lower']}")
+print(f"  tick_upper: {best_fine['tick_upper']}")
+print(f"  rebalance_threshold: {best_fine['rebalance_threshold']:.2%}")
+```
+
+### Constrained Optimization
+
+Add constraints to your search:
+
+```python
+# Only consider strategies with:
+# - Sharpe > 1
+# - Max drawdown < 15%
+# - At least 50% time in range
+
+filtered = result.metrics[
+    (result.metrics['sharpe'] > 1) &
+    (result.metrics['max_drawdown_pct'] < 15) &
+    (result.metrics['time_in_position'] > 50)
+]
+
+if len(filtered) > 0:
+    best = filtered.loc[filtered['net_pnl'].idxmax()]
+    print(f"Best constrained strategy:")
+    print(best[['tick_lower', 'tick_upper', 'rebalance_threshold', 'net_pnl', 'sharpe']])
+else:
+    print("No strategies meet all constraints")
+```
+
+## Step 5: Robustness Testing
+
+Optimal parameters on one dataset may not generalize. Test robustness.
+
+### Walk-Forward Analysis
+
+```python
+# Split data into periods
+n_periods = 5
+period_size = len(swaps) // n_periods
+
+results_by_period = []
+for i in range(n_periods):
+    start = i * period_size
+    end = start + period_size
+    period_swaps = swaps.iloc[start:end].copy()
+
+    result = bt.run(period_swaps, strategies)
+    best = result.summary().iloc[0]
+    results_by_period.append({
+        'period': i,
+        'best_tick_lower': best['tick_lower'],
+        'best_tick_upper': best['tick_upper'],
+        'best_rebalance': best['rebalance_threshold'],
+        'net_pnl': best['net_pnl'],
+    })
+
+import pandas as pd
+walk_forward = pd.DataFrame(results_by_period)
+print("Walk-Forward Analysis:")
+print(walk_forward)
+
+# Check consistency
+print(f"\nOptimal tick_lower range: {walk_forward['best_tick_lower'].min()} to {walk_forward['best_tick_lower'].max()}")
+print(f"Optimal tick_upper range: {walk_forward['best_tick_upper'].min()} to {walk_forward['best_tick_upper'].max()}")
+```
+
+### Monte Carlo Simulation
+
+Test with different random price paths:
+
+```python
+results_by_seed = []
+
+for seed in range(10):
+    test_swaps = amm.generate_swaps(
+        n_swaps=10000,
+        price_volatility=0.03,
+        seed=seed
+    )
+
+    result = bt.run(test_swaps, strategies)
+    best = result.summary().iloc[0]
+
+    results_by_seed.append({
+        'seed': seed,
+        **best.to_dict()
+    })
+
+monte_carlo = pd.DataFrame(results_by_seed)
+
+print("Monte Carlo Results:")
+print(f"Mean PnL: ${monte_carlo['net_pnl'].mean():,.2f}")
+print(f"Std PnL: ${monte_carlo['net_pnl'].std():,.2f}")
+print(f"Win rate: {(monte_carlo['net_pnl'] > 0).mean():.0%}")
+```
+
+### Sensitivity Analysis
+
+How sensitive is performance to small parameter changes?
+
+```python
+# Test small variations around optimal
+optimal = result.summary().iloc[0]
+base_pnl = optimal['net_pnl']
+
+sensitivities = {}
+
+# Vary each parameter by ±10%
+for param in ['tick_lower', 'tick_upper', 'rebalance_threshold']:
+    base_value = optimal[param]
+
+    # Create test strategies with variations
+    if param in ['tick_lower', 'tick_upper']:
+        variations = [int(base_value * 0.9), int(base_value), int(base_value * 1.1)]
+    else:
+        variations = [base_value * 0.9, base_value, base_value * 1.1]
+
+    test_strategies = {
+        'initial_capital': [optimal['initial_capital']],
+        'tick_lower': [optimal['tick_lower']],
+        'tick_upper': [optimal['tick_upper']],
+        'rebalance_threshold': [optimal['rebalance_threshold']],
+        'rebalance_frequency': [optimal['rebalance_frequency']],
+    }
+    test_strategies[param] = variations
+
+    test_result = bt.run(swaps, test_strategies)
+    pnls = test_result.metrics['net_pnl'].values
+
+    # Sensitivity = (max - min) / base
+    sensitivities[param] = (pnls.max() - pnls.min()) / abs(base_pnl)
+
+print("Parameter Sensitivities:")
+for param, sens in sorted(sensitivities.items(), key=lambda x: -x[1]):
+    print(f"  {param}: {sens:.1%}")
+```
+
+## Step 6: Multi-Objective Optimization
+
+Sometimes you want to balance multiple objectives.
+
+### Pareto Frontier
+
+Find strategies that aren't dominated by any other:
+
+```python
+def is_pareto_efficient(costs):
+    """Find Pareto-efficient strategies."""
+    is_efficient = np.ones(costs.shape[0], dtype=bool)
+    for i, c in enumerate(costs):
+        if is_efficient[i]:
+            # Keep strategies that are better in at least one objective
+            is_efficient[is_efficient] = np.any(
+                costs[is_efficient] < c, axis=1
+            ) | np.all(costs[is_efficient] == c, axis=1)
+            is_efficient[i] = True
+    return is_efficient
+
+# Optimize for return AND low drawdown
+# (negate return since we want to maximize it)
+costs = result.metrics[['total_return_pct', 'max_drawdown_pct']].values
+costs[:, 0] = -costs[:, 0]  # Maximize return = minimize negative return
+
+pareto_mask = is_pareto_efficient(costs)
+pareto_strategies = result.metrics[pareto_mask]
+
+print(f"Found {len(pareto_strategies)} Pareto-efficient strategies")
+print(pareto_strategies[['total_return_pct', 'max_drawdown_pct', 'sharpe']].head(10))
+```
+
+### Weighted Objective
+
+Combine objectives with weights:
+
+```python
+# Weighted score: 60% return, 40% risk-adjusted
+result.metrics['score'] = (
+    0.6 * result.metrics['total_return_pct'] / result.metrics['total_return_pct'].max() +
+    0.4 * result.metrics['sharpe'] / result.metrics['sharpe'].max()
+)
+
+best_score = result.metrics.loc[result.metrics['score'].idxmax()]
+print(f"Best weighted strategy:")
+print(best_score[['tick_lower', 'tick_upper', 'total_return_pct', 'sharpe', 'score']])
+```
+
+## Common Pitfalls
+
+<Warning>
+**Overfitting**: Parameters optimized too precisely on historical data may not generalize. Use walk-forward testing.
+</Warning>
+
+<Warning>
+**Survivorship bias**: Ensure your test data includes periods of poor performance, not just bull markets.
+</Warning>
+
+<Warning>
+**Ignoring costs**: High rebalance frequency may look good before gas costs. Always include realistic costs.
+</Warning>
+
+<Warning>
+**Single metric focus**: Optimizing only for returns may produce strategies with unacceptable risk.
+</Warning>
+
+## Complete Optimization Workflow
+
+```python
+import ammbt as amm
+import pandas as pd
+import numpy as np
+
+# 1. Generate test data
+swaps = amm.generate_swaps(n_swaps=10000, price_volatility=0.03, seed=42)
+
+# 2. Define broad search space
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': list(range(-600, -50, 50)),
+    'tick_upper': list(range(100, 650, 50)),
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.07, 0.10],
+    'rebalance_frequency': [0, 100, 200, 500],
+}
+
+# 3. Run backtest
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+result = bt.run(swaps, strategies)
+
+# 4. Filter by constraints
+filtered = result.metrics[
+    (result.metrics['sharpe'] > 0.5) &
+    (result.metrics['max_drawdown_pct'] < 20)
+]
+
+# 5. Find optimal
+if len(filtered) > 0:
+    best = filtered.loc[filtered['net_pnl'].idxmax()]
+    print("Optimal Strategy:")
+    print(best)
+else:
+    print("Relax constraints - no strategies qualify")
+
+# 6. Validate with walk-forward
+# (implement as shown above)
+
+# 7. Visualize
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Custom Rebalancing" icon="rotate" href="/tutorials/intermediate/custom-rebalancing">
+    Implement advanced rebalancing logic
+  </Card>
+  <Card title="Real Data" icon="database" href="/tutorials/intermediate/working-with-real-data">
+    Test with historical swap data
+  </Card>
+</CardGroup>

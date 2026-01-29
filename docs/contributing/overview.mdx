@@ -1,0 +1,81 @@
+---
+title: "Contributing Overview"
+description: "How to contribute to ammBT"
+---
+
+# Contributing to ammBT
+
+Thank you for your interest in contributing to ammBT! This guide will help you get started.
+
+## Ways to Contribute
+
+<CardGroup cols={2}>
+  <Card title="Report Bugs" icon="bug">
+    Found a bug? Open an issue with reproduction steps.
+  </Card>
+  <Card title="Suggest Features" icon="lightbulb">
+    Have an idea? Open a feature request issue.
+  </Card>
+  <Card title="Submit Code" icon="code-pull-request">
+    Fix bugs or add features via pull requests.
+  </Card>
+  <Card title="Improve Docs" icon="book">
+    Help improve documentation clarity.
+  </Card>
+</CardGroup>
+
+## Quick Start
+
+```bash
+# Fork and clone
+git clone https://github.com/YOUR_USERNAME/ammbt.git
+cd ammbt
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate
+
+# Install in development mode
+pip install -e ".[dev]"
+
+# Run tests
+pytest tests/
+
+# Create branch
+git checkout -b feature/your-feature
+
+# Make changes, then submit PR
+```
+
+## Guidelines
+
+### Code
+
+- Follow PEP 8 style guide
+- Add tests for new features
+- Update documentation as needed
+- Use type hints
+
+### Pull Requests
+
+- One feature/fix per PR
+- Clear description of changes
+- Reference related issues
+- Pass all CI checks
+
+### Communication
+
+- Be respectful and constructive
+- Ask questions if unsure
+- Accept feedback gracefully
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Development Setup" href="/contributing/development-setup">
+    Set up your environment
+  </Card>
+  <Card title="Code Style" href="/contributing/code-style">
+    Coding standards
+  </Card>
+</CardGroup>

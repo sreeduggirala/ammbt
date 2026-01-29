@@ -1,0 +1,55 @@
+---
+title: "Performance Plots"
+description: "Create portfolio performance visualizations"
+---
+
+# Performance Plots
+
+## Basic Performance Chart
+
+```python
+import ammbt as amm
+
+result = bt.run(swaps, strategies)
+fig = amm.plot_performance(result, strategy_idx=0)
+fig.show()
+```
+
+## Best Strategy
+
+```python
+best_idx = result.summary().index[0]
+fig = amm.plot_performance(result, strategy_idx=best_idx)
+fig.update_layout(title=f'Best Strategy (idx={best_idx})')
+fig.show()
+```
+
+## Without Reserves
+
+```python
+fig = amm.plot_performance(result, strategy_idx=0, show_reserves=False)
+```
+
+## Customize
+
+```python
+fig = amm.plot_performance(result, strategy_idx=0)
+fig.update_layout(
+    template='plotly_white',
+    height=800,
+    title='ETH-USDC LP Performance',
+)
+fig.show()
+```
+
+## Save
+
+```python
+fig.write_html('performance.html')
+fig.write_image('performance.png')  # Requires kaleido
+```
+
+## See Also
+
+- [plot_performance API](/api-reference/plotting/plot-performance)
+- [Basic Plotting Tutorial](/tutorials/beginner/basic-plotting)

@@ -1,0 +1,304 @@
+---
+title: "Risk Metrics"
+description: "Understanding risk metrics for LP strategies"
+---
+
+# Risk Metrics
+
+ammBT calculates several risk metrics to help you understand the downside potential of LP strategies. This page explains each metric and how to use them.
+
+## Maximum Drawdown
+
+The largest peak-to-trough decline in portfolio value.
+
+### Definition
+
+$$\text{Max Drawdown} = \max_t \left( \frac{\text{Peak}_t - \text{Value}_t}{\text{Peak}_t} \right)$$
+
+### Calculation
+
+```python
+def calculate_max_drawdown(portfolio_values):
+    """Calculate maximum drawdown percentage."""
+
+    # Rolling maximum (peak)
+    running_max = np.maximum.accumulate(portfolio_values)
+
+    # Drawdown at each point
+    drawdown = (running_max - portfolio_values) / running_max
+
+    # Maximum drawdown
+    max_drawdown = np.max(drawdown)
+
+    return max_drawdown * 100  # As percentage
+```
+
+### Interpretation
+
+| Max Drawdown | Risk Level |
+|--------------|------------|
+| < 5% | Low |
+| 5-10% | Moderate |
+| 10-20% | High |
+| > 20% | Very High |
+
+### Using in ammBT
+
+```python
+result = bt.run(swaps, strategies)
+
+# Max drawdown for each strategy
+drawdowns = result.metrics['max_drawdown_pct']
+
+# Filter low-risk strategies
+low_risk = result.metrics[result.metrics['max_drawdown_pct'] < 10]
+```
+
+## Sharpe Ratio
+
+Risk-adjusted return measuring excess return per unit of volatility.
+
+### Definition
+
+$$\text{Sharpe} = \frac{E[R] - R_f}{\sigma_R}$$
+
+Where:
+- $E[R]$ = Expected return
+- $R_f$ = Risk-free rate (assumed 0 in ammBT)
+- $\sigma_R$ = Standard deviation of returns
+
+### Calculation
+
+```python
+def calculate_sharpe(returns, annualization_factor=365):
+    """Calculate annualized Sharpe ratio."""
+
+    mean_return = np.mean(returns)
+    std_return = np.std(returns)
+
+    if std_return == 0:
+        return 0
+
+    sharpe = mean_return / std_return
+
+    # Annualize
+    sharpe_annual = sharpe * np.sqrt(annualization_factor)
+
+    return sharpe_annual
+```
+
+### Interpretation
+
+| Sharpe | Quality |
+|--------|---------|
+| < 0 | Losing money |
+| 0-0.5 | Poor |
+| 0.5-1.0 | Below average |
+| 1.0-2.0 | Good |
+| 2.0-3.0 | Very good |
+| > 3.0 | Excellent |
+
+### Using in ammBT
+
+```python
+# Get Sharpe ratios
+sharpes = result.metrics['sharpe']
+
+# Best risk-adjusted strategy
+best_sharpe_idx = result.metrics['sharpe'].idxmax()
+print(result.metrics.loc[best_sharpe_idx])
+```
+
+## Sortino Ratio
+
+Like Sharpe, but only penalizes downside volatility.
+
+### Definition
+
+$$\text{Sortino} = \frac{E[R] - R_f}{\sigma_D}$$
+
+Where $\sigma_D$ = standard deviation of negative returns only.
+
+### Calculation
+
+```python
+def calculate_sortino(returns, annualization_factor=365):
+    """Calculate annualized Sortino ratio."""
+
+    mean_return = np.mean(returns)
+    negative_returns = returns[returns < 0]
+
+    if len(negative_returns) == 0:
+        return float('inf')
+
+    downside_std = np.std(negative_returns)
+
+    if downside_std == 0:
+        return float('inf')
+
+    sortino = mean_return / downside_std
+    sortino_annual = sortino * np.sqrt(annualization_factor)
+
+    return sortino_annual
+```
+
+## Calmar Ratio
+
+Return relative to maximum drawdown.
+
+### Definition
+
+$$\text{Calmar} = \frac{\text{Annual Return}}{\text{Max Drawdown}}$$
+
+### Calculation
+
+```python
+def calculate_calmar(total_return, max_drawdown, days):
+    """Calculate Calmar ratio."""
+
+    annual_return = total_return * (365 / days)
+
+    if max_drawdown == 0:
+        return float('inf')
+
+    return annual_return / max_drawdown
+```
+
+## Value at Risk (VaR)
+
+Maximum expected loss at a confidence level.
+
+### Definition
+
+$$\text{VaR}_{95\%} = \text{Percentile}_{5\%}(\text{Returns})$$
+
+### Calculation
+
+```python
+def calculate_var(returns, confidence=0.95):
+    """Calculate Value at Risk."""
+
+    var = np.percentile(returns, (1 - confidence) * 100)
+
+    return abs(var)  # Return as positive number
+```
+
+## Risk-Return Analysis
+
+### Efficient Frontier
+
+Plot strategies by risk vs return:
+
+```python
+fig = amm.plot_efficient_frontier(
+    result,
+    risk_metric='max_drawdown_pct',
+    return_metric='total_return_pct'
+)
+fig.show()
+```
+
+### Risk-Adjusted Ranking
+
+```python
+def rank_by_risk_adjusted(result):
+    """Rank strategies by risk-adjusted performance."""
+
+    metrics = result.metrics.copy()
+
+    # Multiple risk-adjusted metrics
+    metrics['sharpe'] = result.metrics['sharpe']
+    metrics['return_per_drawdown'] = (
+        result.metrics['total_return_pct'] /
+        result.metrics['max_drawdown_pct'].clip(lower=0.1)
+    )
+
+    # Combined score
+    metrics['risk_score'] = (
+        metrics['sharpe'].rank(ascending=False) +
+        metrics['return_per_drawdown'].rank(ascending=False)
+    ) / 2
+
+    return metrics.sort_values('risk_score')
+```
+
+## Risk Filtering
+
+### Conservative Strategies
+
+```python
+# Filter by multiple risk criteria
+conservative = result.metrics[
+    (result.metrics['max_drawdown_pct'] < 10) &
+    (result.metrics['sharpe'] > 1.0) &
+    (result.metrics['num_rebalances'] < 10)
+]
+```
+
+### Aggressive Strategies
+
+```python
+# Higher return tolerance for risk
+aggressive = result.metrics[
+    (result.metrics['total_return_pct'] > 10) &
+    (result.metrics['sharpe'] > 0.5)
+]
+```
+
+## Visualizing Risk
+
+### Risk Distribution
+
+```python
+import plotly.express as px
+
+fig = px.histogram(
+    result.metrics,
+    x='max_drawdown_pct',
+    nbins=30,
+    title='Distribution of Max Drawdown',
+    labels={'max_drawdown_pct': 'Max Drawdown (%)'}
+)
+fig.show()
+```
+
+### Risk by Parameter
+
+```python
+fig = px.box(
+    result.metrics,
+    x='rebalance_threshold',
+    y='max_drawdown_pct',
+    title='Drawdown by Rebalance Threshold',
+)
+fig.show()
+```
+
+## Key Takeaways
+
+<Check>
+Max drawdown shows worst-case scenario
+</Check>
+
+<Check>
+Sharpe ratio enables comparison across different strategies
+</Check>
+
+<Check>
+Higher Sharpe with lower drawdown is ideal
+</Check>
+
+<Check>
+Use multiple metrics for comprehensive risk assessment
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Synthetic Data" icon="wand-magic-sparkles" href="/concepts/data/synthetic-generation">
+    Generate test data
+  </Card>
+  <Card title="API Reference" icon="book" href="/api-reference/overview">
+    Full API documentation
+  </Card>
+</CardGroup>

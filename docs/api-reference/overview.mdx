@@ -1,0 +1,154 @@
+---
+title: "API Reference Overview"
+description: "Complete API reference for ammBT"
+---
+
+# API Reference
+
+This section provides comprehensive documentation for all ammBT APIs.
+
+## Core Classes
+
+<CardGroup cols={2}>
+  <Card title="LPBacktester" icon="flask" href="/api-reference/core/lpbacktester">
+    Main backtesting engine
+  </Card>
+  <Card title="BacktestResult" icon="chart-bar" href="/api-reference/core/backtestresult">
+    Results container with metrics
+  </Card>
+</CardGroup>
+
+## AMM Simulators
+
+<CardGroup cols={2}>
+  <Card title="BaseAMMSimulator" icon="cube" href="/api-reference/amms/base-amm-simulator">
+    Abstract base class
+  </Card>
+  <Card title="UniswapV2Simulator" icon="circle" href="/api-reference/amms/uniswap-v2-simulator">
+    Constant product AMM
+  </Card>
+  <Card title="UniswapV3Simulator" icon="arrows-left-right-to-line" href="/api-reference/amms/uniswap-v3-simulator">
+    Concentrated liquidity
+  </Card>
+  <Card title="MeteoraLMMSimulator" icon="grid-2" href="/api-reference/amms/meteora-dlmm-simulator">
+    Dynamic liquidity
+  </Card>
+</CardGroup>
+
+## Data Functions
+
+<CardGroup cols={2}>
+  <Card title="generate_swaps" icon="wand-magic-sparkles" href="/api-reference/data/generate-swaps">
+    Generate synthetic swap data
+  </Card>
+  <Card title="generate_price_path" icon="chart-line" href="/api-reference/data/generate-price-path">
+    Generate price paths
+  </Card>
+</CardGroup>
+
+## Plotting Functions
+
+<CardGroup cols={2}>
+  <Card title="plot_performance" icon="chart-area" href="/api-reference/plotting/plot-performance">
+    Performance over time
+  </Card>
+  <Card title="plot_metrics_heatmap" icon="grip" href="/api-reference/plotting/plot-metrics-heatmap">
+    Parameter sensitivity
+  </Card>
+  <Card title="plot_efficient_frontier" icon="chart-scatter" href="/api-reference/plotting/plot-efficient-frontier">
+    Risk vs return
+  </Card>
+  <Card title="plot_pnl_distribution" icon="chart-simple" href="/api-reference/plotting/plot-pnl-distribution">
+    PnL histogram
+  </Card>
+</CardGroup>
+
+## Utilities
+
+<CardGroup cols={2}>
+  <Card title="Math Functions" icon="calculator" href="/api-reference/utils/math-functions">
+    Core math utilities
+  </Card>
+  <Card title="Tick Conversions" icon="ruler" href="/api-reference/utils/tick-conversions">
+    V3 tick utilities
+  </Card>
+  <Card title="Bin Conversions" icon="grid" href="/api-reference/utils/bin-conversions">
+    DLMM bin utilities
+  </Card>
+  <Card title="Strategy Generators" icon="sliders" href="/api-reference/utils/strategy-generators">
+    Strategy grid helpers
+  </Card>
+  <Card title="Config" icon="gear" href="/api-reference/utils/config">
+    Global configuration
+  </Card>
+</CardGroup>
+
+## Quick Reference
+
+### Main Imports
+
+```python
+import ammbt as amm
+
+# Core
+amm.LPBacktester
+
+# Data generation
+amm.generate_swaps
+amm.generate_price_path
+
+# Plotting
+amm.plot_performance
+amm.plot_metrics_heatmap
+amm.plot_efficient_frontier
+amm.plot_pnl_distribution
+```
+
+### Utility Imports
+
+```python
+from ammbt.utils import (
+    # Config
+    Config,
+
+    # V3 utilities
+    tick_to_price,
+    price_to_tick,
+    get_tick_spacing,
+    generate_tick_ranges,
+    create_v3_strategy_grid,
+
+    # DLMM utilities
+    bin_id_to_price,
+    price_to_bin_id,
+    generate_bin_ranges,
+    create_dlmm_strategy_grid,
+    SHAPE_SPOT,
+    SHAPE_CURVE,
+    SHAPE_BID_ASK,
+)
+```
+
+### Type Reference
+
+```python
+# Strategy dict
+strategies = {
+    'initial_capital': List[float],
+    'tick_lower': List[int],        # V3
+    'tick_upper': List[int],        # V3
+    'bin_lower': List[int],         # DLMM
+    'bin_upper': List[int],         # DLMM
+    'liquidity_shape': List[int],   # DLMM
+    'rebalance_threshold': List[float],
+    'rebalance_frequency': List[int],
+}
+
+# Swap DataFrame
+swaps = pd.DataFrame({
+    'amount0': float,
+    'amount1': float,
+    'price': float,
+    'timestamp': int,
+})
+```

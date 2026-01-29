@@ -1,0 +1,302 @@
+---
+title: "PnL Calculations"
+description: "How ammBT calculates profit and loss for LP positions"
+---
+
+# PnL Calculations
+
+ammBT provides comprehensive profit and loss calculations for LP positions. This page explains how each metric is computed.
+
+## Net PnL
+
+The primary profitability metric:
+
+$$\text{Net PnL} = \text{Final Value} - \text{Initial Capital}$$
+
+### Final Value Components
+
+```python
+final_value = (
+    token0_balance * final_price +
+    token1_balance +
+    uncollected_fees_0 * final_price +
+    uncollected_fees_1 -
+    gas_spent
+)
+```
+
+### Calculation in ammBT
+
+```python
+def calculate_net_pnl(positions, swaps, strategy_params):
+    """Calculate net PnL for all strategies."""
+
+    final_positions = positions[-1]  # Last row
+    final_price = swaps['price'].iloc[-1]
+
+    # Token values
+    token_value = (
+        final_positions['token0_balance'] * final_price +
+        final_positions['token1_balance']
+    )
+
+    # Add uncollected fees
+    fee_value = (
+        final_positions['uncollected_fees_0'] * final_price +
+        final_positions['uncollected_fees_1']
+    )
+
+    # Subtract gas
+    final_value = token_value + fee_value - final_positions['gas_spent']
+
+    # Net PnL
+    net_pnl = final_value - strategy_params['initial_capital']
+
+    return net_pnl
+```
+
+## Total Return Percentage
+
+Return as a percentage of initial capital:
+
+$$\text{Total Return \%} = \frac{\text{Net PnL}}{\text{Initial Capital}} \times 100$$
+
+```python
+total_return_pct = (net_pnl / initial_capital) * 100
+```
+
+## Fee Earnings
+
+### Total Fees Earned
+
+```python
+total_fees_earned = (
+    final_positions['uncollected_fees_0'] * final_price +
+    final_positions['uncollected_fees_1']
+)
+```
+
+### Fee APR
+
+Annualized fee income:
+
+```python
+# Calculate time period
+start_time = swaps['timestamp'].iloc[0]
+end_time = swaps['timestamp'].iloc[-1]
+days = (end_time - start_time) / 86400
+
+# Annualize
+fee_apr = (total_fees_earned / initial_capital) * (365 / days) * 100
+```
+
+## Impermanent Loss
+
+IL measures the cost of providing liquidity vs. holding:
+
+```python
+def calculate_impermanent_loss(positions, swaps, strategy_params):
+    """Calculate IL for all strategies."""
+
+    initial_price = swaps['price'].iloc[0]
+    final_price = swaps['price'].iloc[-1]
+
+    # What if we just held?
+    initial_capital = strategy_params['initial_capital']
+
+    # Initial token amounts (50/50 split at entry)
+    initial_token0 = initial_capital / 2 / initial_price
+    initial_token1 = initial_capital / 2
+
+    # Hold value at final price
+    hold_value = initial_token0 * final_price + initial_token1
+
+    # LP value (tokens + fees, no gas for pure IL)
+    final = positions[-1]
+    lp_value = (
+        (final['token0_balance'] + final['uncollected_fees_0']) * final_price +
+        (final['token1_balance'] + final['uncollected_fees_1'])
+    )
+
+    # IL is difference (typically negative = loss)
+    impermanent_loss = lp_value - hold_value
+
+    return impermanent_loss
+```
+
+### IL Attribution
+
+Break down IL by source:
+
+```python
+# V2 theoretical IL
+price_ratio = final_price / initial_price
+theoretical_il_factor = 2 * np.sqrt(price_ratio) / (1 + price_ratio) - 1
+theoretical_il = initial_capital * theoretical_il_factor
+
+# Actual IL may differ due to:
+# - Rebalancing (crystallizes IL)
+# - Fee compounding
+# - Out-of-range time (V3/DLMM)
+```
+
+## Risk Metrics
+
+### Maximum Drawdown
+
+Largest peak-to-trough decline:
+
+```python
+def calculate_max_drawdown(positions, swaps):
+    """Calculate maximum drawdown percentage."""
+
+    # Calculate portfolio value at each step
+    prices = swaps['price'].values
+    portfolio_values = (
+        positions['token0_balance'] * prices[:, np.newaxis] +
+        positions['token1_balance'] +
+        positions['uncollected_fees_0'] * prices[:, np.newaxis] +
+        positions['uncollected_fees_1'] -
+        positions['gas_spent']
+    )
+
+    # Rolling maximum
+    running_max = np.maximum.accumulate(portfolio_values, axis=0)
+
+    # Drawdown at each point
+    drawdown = (running_max - portfolio_values) / running_max
+
+    # Maximum drawdown
+    max_drawdown_pct = np.max(drawdown, axis=0) * 100
+
+    return max_drawdown_pct
+```
+
+### Sharpe Ratio
+
+Risk-adjusted return (assuming risk-free rate = 0):
+
+```python
+def calculate_sharpe(positions, swaps):
+    """Calculate Sharpe ratio."""
+
+    # Calculate returns at each step
+    prices = swaps['price'].values
+    portfolio_values = calculate_portfolio_values(positions, prices)
+
+    # Period returns
+    returns = np.diff(portfolio_values, axis=0) / portfolio_values[:-1]
+
+    # Sharpe = mean(returns) / std(returns)
+    mean_return = np.mean(returns, axis=0)
+    std_return = np.std(returns, axis=0)
+
+    # Avoid division by zero
+    sharpe = np.where(std_return > 0, mean_return / std_return, 0)
+
+    # Annualize (assuming daily returns)
+    sharpe_annualized = sharpe * np.sqrt(365)
+
+    return sharpe_annualized
+```
+
+## Activity Metrics
+
+### Number of Rebalances
+
+```python
+num_rebalances = positions[-1]['num_rebalances']
+```
+
+### Gas Spent
+
+```python
+gas_spent = positions[-1]['gas_spent']
+```
+
+### Time in Position
+
+Percentage of time position was active and earning fees:
+
+```python
+def calculate_time_in_position(positions):
+    """Calculate percentage of time in range (V3/DLMM)."""
+
+    # Count swaps where position was in range
+    in_range_count = np.sum(positions['is_in_range'], axis=0)
+    total_swaps = positions.shape[0] - 1  # Exclude initial
+
+    time_in_position = (in_range_count / total_swaps) * 100
+
+    return time_in_position
+```
+
+## Complete Metrics Calculation
+
+```python
+def calculate_all_metrics(positions, swaps, strategy_params):
+    """Calculate all metrics for backtest result."""
+
+    final = positions[-1]
+    final_price = swaps['price'].iloc[-1]
+    initial_price = swaps['price'].iloc[0]
+
+    # Basic values
+    token_value = final['token0_balance'] * final_price + final['token1_balance']
+    fee_value = final['uncollected_fees_0'] * final_price + final['uncollected_fees_1']
+    final_value = token_value + fee_value - final['gas_spent']
+
+    initial_capital = strategy_params['initial_capital']
+
+    # Metrics
+    metrics = pd.DataFrame({
+        # Strategy params
+        **{k: strategy_params[k] for k in strategy_params.dtype.names},
+
+        # PnL metrics
+        'net_pnl': final_value - initial_capital,
+        'total_return_pct': (final_value - initial_capital) / initial_capital * 100,
+        'total_fees_earned': fee_value,
+        'impermanent_loss': calculate_impermanent_loss(positions, swaps, strategy_params),
+
+        # Risk metrics
+        'sharpe': calculate_sharpe(positions, swaps),
+        'max_drawdown_pct': calculate_max_drawdown(positions, swaps),
+
+        # Activity metrics
+        'num_rebalances': final['num_rebalances'],
+        'gas_spent': final['gas_spent'],
+        'time_in_position': calculate_time_in_position(positions),
+    })
+
+    return metrics
+```
+
+## Accessing Metrics
+
+```python
+result = bt.run(swaps, strategies)
+
+# All metrics
+print(result.metrics.columns)
+
+# Specific metric
+net_pnls = result.metrics['net_pnl']
+
+# Summary sorted by net PnL
+summary = result.summary()
+
+# Filter
+profitable = result.metrics[result.metrics['net_pnl'] > 0]
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="IL Tracking" icon="chart-line-down" href="/concepts/metrics/impermanent-loss-tracking">
+    Detailed IL analysis
+  </Card>
+  <Card title="Capital Efficiency" icon="gauge" href="/concepts/metrics/capital-efficiency">
+    Measuring efficiency
+  </Card>
+</CardGroup>

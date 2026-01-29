@@ -1,0 +1,62 @@
+---
+title: "Parameter Sweeps"
+description: "Run comprehensive parameter searches"
+---
+
+# Parameter Sweeps
+
+## Basic Grid Search
+
+```python
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': list(range(-500, 0, 50)),
+    'tick_upper': list(range(50, 550, 50)),
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+
+# Total: 3 × 10 × 10 × 3 = 900 strategies
+```
+
+## Iterative Refinement
+
+```python
+# Coarse search
+coarse = {
+    'tick_lower': [-100, -300, -500],
+    'tick_upper': [100, 300, 500],
+}
+result = bt.run(swaps, coarse)
+best = result.summary().iloc[0]
+
+# Fine search around best
+fine = {
+    'tick_lower': [best['tick_lower'] + d for d in [-50, 0, 50]],
+    'tick_upper': [best['tick_upper'] + d for d in [-50, 0, 50]],
+}
+result = bt.run(swaps, fine)
+```
+
+## Filtering Invalid Combinations
+
+```python
+import pandas as pd
+from itertools import product
+
+# Generate all combinations
+combos = list(product(
+    range(-500, 0, 50),
+    range(50, 550, 50),
+))
+
+df = pd.DataFrame(combos, columns=['tick_lower', 'tick_upper'])
+
+# Filter: tick_upper > tick_lower + 100
+df = df[df['tick_upper'] > df['tick_lower'] + 100]
+
+strategies = df.to_dict('list')
+```
+
+## See Also
+
+- [Strategy Optimization](/tutorials/intermediate/strategy-optimization)

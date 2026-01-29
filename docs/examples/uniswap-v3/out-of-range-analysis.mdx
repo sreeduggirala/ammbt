@@ -1,0 +1,66 @@
+---
+title: "Out-of-Range Analysis"
+description: "Analyze out-of-range position behavior"
+---
+
+# Out-of-Range Analysis
+
+Understanding what happens when positions go out of range.
+
+```python
+import ammbt as amm
+from ammbt.utils import generate_tick_ranges
+
+# Generate volatile data (more likely to go out of range)
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    initial_price=2000.0,
+    price_volatility=0.04,  # Higher volatility
+    seed=42
+)
+
+# Narrow range (likely to go out of range)
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-100],
+    'tick_upper': [100],
+    'rebalance_threshold': [0.0],  # No rebalancing
+}
+
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000, initial_price=2000.0)
+result = bt.run(swaps, strategies)
+
+# Analyze out-of-range behavior
+history = result.get_position_history(0)
+
+# Time in range
+in_range_pct = history['is_in_range'].mean() * 100
+print(f"Time in range: {in_range_pct:.1f}%")
+
+# Find when it went out of range
+transitions = history['is_in_range'].diff()
+went_out = (transitions == -1).sum()
+came_back = (transitions == 1).sum()
+
+print(f"Went out of range: {went_out} times")
+print(f"Came back in range: {came_back} times")
+
+# Compare with rebalancing
+strategies_rebalance = {
+    'initial_capital': [25000],
+    'tick_lower': [-100],
+    'tick_upper': [100],
+    'rebalance_threshold': [0.10],  # Rebalance on 10% move
+}
+
+result_rebalance = bt.run(swaps, strategies_rebalance)
+
+print(f"\nWith rebalancing:")
+print(f"  Time in range: {result_rebalance.metrics['time_in_position'].iloc[0]:.1f}%")
+print(f"  Rebalances: {result_rebalance.metrics['num_rebalances'].iloc[0]}")
+print(f"  Net PnL: ${result_rebalance.metrics['net_pnl'].iloc[0]:.2f}")
+```
+
+## See Also
+
+- [Custom Rebalancing](/tutorials/intermediate/custom-rebalancing)

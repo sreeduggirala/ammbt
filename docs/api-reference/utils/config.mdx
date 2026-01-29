@@ -1,0 +1,82 @@
+---
+title: "Config"
+description: "Global configuration management"
+---
+
+# Config
+
+Global configuration system for ammBT settings.
+
+## Class Methods
+
+### get()
+
+Get a configuration value.
+
+```python
+@classmethod
+def get(cls, key: str, default: Any = None) -> Any
+```
+
+### set()
+
+Set a configuration value.
+
+```python
+@classmethod
+def set(cls, key: str, value: Any) -> None
+```
+
+### reset()
+
+Reset all settings to defaults.
+
+```python
+@classmethod
+def reset(cls) -> None
+```
+
+## Configuration Keys
+
+### Numba Settings
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `numba.cache` | bool | True | Cache compiled functions |
+| `numba.parallel` | bool | False | Enable parallel execution |
+| `numba.fastmath` | bool | True | Enable fast math |
+
+### Defaults
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `defaults.v2_fee` | float | 0.003 | Default V2 fee rate |
+| `defaults.v3_fee_tiers` | list | [500, 3000, 10000] | V3 fee tiers |
+
+### Plotting
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `plotting.theme` | str | 'plotly_dark' | Plot theme |
+| `plotting.width` | int | 1200 | Default width |
+| `plotting.height` | int | 600 | Default height |
+
+## Examples
+
+```python
+from ammbt.utils import Config
+
+# Get value
+cache_enabled = Config.get('numba.cache')
+
+# Set value
+Config.set('plotting.theme', 'plotly_white')
+
+# Reset all
+Config.reset()
+```
+
+## See Also
+
+- [Numba Compilation](/concepts/architecture/numba-compilation)
+- [Performance Optimization](/tutorials/advanced/performance-optimization)

@@ -1,0 +1,124 @@
+---
+title: "Troubleshooting"
+description: "Solutions to common issues"
+---
+
+# Troubleshooting
+
+## Installation Issues
+
+### pip install fails
+
+```bash
+# Update pip
+pip install --upgrade pip
+
+# Try with --no-cache
+pip install --no-cache-dir ammbt
+```
+
+### Numba installation problems
+
+```bash
+# Install LLVM dependencies
+# macOS
+brew install llvm
+
+# Ubuntu
+sudo apt install llvm
+
+# Then reinstall
+pip install --upgrade numba
+```
+
+## Performance Issues
+
+### Slow first run
+
+Numba compiles on first use. Enable caching:
+
+```python
+from ammbt.utils import Config
+Config.set("numba.cache", True)
+```
+
+### High memory usage
+
+Process in batches:
+
+```python
+def batch_backtest(swaps, strategies, batch_size=500):
+    results = []
+    for i in range(0, len(strategies), batch_size):
+        batch = strategies[i:i+batch_size]
+        result = bt.run(swaps, batch)
+        results.append(result.metrics)
+    return pd.concat(results)
+```
+
+## Data Issues
+
+### Price column has wrong values
+
+Check decimal adjustments:
+
+```python
+# USDC has 6 decimals, ETH has 18
+swaps['amount0'] /= 10**18  # ETH
+swaps['amount1'] /= 10**6   # USDC
+swaps['price'] = abs(swaps['amount1']) / abs(swaps['amount0'])
+```
+
+### Timestamps not monotonic
+
+Sort and deduplicate:
+
+```python
+swaps = swaps.sort_values('timestamp').drop_duplicates('timestamp')
+```
+
+## Results Issues
+
+### All strategies show same results
+
+Check that strategy parameters actually vary:
+
+```python
+print(result.strategy_params.nunique())
+```
+
+### Unexpected negative returns
+
+Check for:
+1. Impermanent loss exceeding fees
+2. High gas costs from frequent rebalancing
+3. Starting price vs ending price
+
+```python
+print(f"Price change: {swaps['price'].iloc[-1]/swaps['price'].iloc[0] - 1:.2%}")
+```
+
+## Plotting Issues
+
+### Plots not showing
+
+```python
+# In Jupyter
+import plotly.io as pio
+pio.renderers.default = 'notebook'
+
+# In scripts
+fig.show()  # Opens browser
+# or
+fig.write_html('output.html')
+```
+
+## Getting Help
+
+1. Check the [FAQ](/reference/faq)
+2. Search [GitHub Issues](https://github.com/your-org/ammbt/issues)
+3. Open a new issue with:
+   - ammBT version
+   - Python version
+   - Minimal reproducible example
+   - Full error traceback

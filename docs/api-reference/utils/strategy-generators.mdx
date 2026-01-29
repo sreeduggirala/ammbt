@@ -1,0 +1,115 @@
+---
+title: "Strategy Generators"
+description: "Utilities for creating strategy parameter grids"
+---
+
+# Strategy Generators
+
+Helper functions for creating strategy parameter grids.
+
+## V3 Generators
+
+### generate_tick_ranges
+
+Generate tick ranges by percentage width.
+
+```python
+def generate_tick_ranges(
+    current_price: float = 1.0,
+    tick_spacings: List[int] = None,
+    range_widths_pct: List[float] = None,
+    num_ranges: int = 10,
+) -> List[Tuple[int, int]]
+```
+
+### generate_tick_ranges_asymmetric
+
+Generate asymmetric tick ranges.
+
+```python
+def generate_tick_ranges_asymmetric(
+    current_price: float,
+    lower_ranges_pct: List[float],
+    upper_ranges_pct: List[float],
+    tick_spacing: int = 60,
+) -> List[Tuple[int, int]]
+```
+
+### create_v3_strategy_grid
+
+Create V3 strategy grid DataFrame.
+
+```python
+def create_v3_strategy_grid(
+    initial_capitals: List[float],
+    tick_ranges: List[Tuple[int, int]],
+    rebalance_thresholds: List[float] = None,
+    rebalance_frequencies: List[int] = None,
+) -> pd.DataFrame
+```
+
+## DLMM Generators
+
+### generate_bin_ranges
+
+Generate bin ranges by percentage width.
+
+```python
+def generate_bin_ranges(
+    current_price: float = 1.0,
+    bin_step: int = 25,
+    range_widths_pct: List[float] = None,
+    num_ranges: int = 10,
+) -> List[Tuple[int, int]]
+```
+
+### create_dlmm_strategy_grid
+
+Create DLMM strategy grid DataFrame.
+
+```python
+def create_dlmm_strategy_grid(
+    initial_capitals: List[float],
+    bin_ranges: List[Tuple[int, int]],
+    liquidity_shapes: List[int] = None,
+    rebalance_thresholds: List[float] = None,
+    rebalance_frequencies: List[int] = None,
+) -> pd.DataFrame
+```
+
+## Shape Constants
+
+```python
+from ammbt.utils import SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK
+
+SHAPE_SPOT = 0       # Uniform
+SHAPE_CURVE = 1      # Concentrated
+SHAPE_BID_ASK = 2    # Edges
+```
+
+## Examples
+
+```python
+from ammbt.utils import (
+    generate_tick_ranges,
+    create_v3_strategy_grid,
+)
+
+# Generate ranges
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.05, 0.10, 0.20],
+)
+
+# Create grid
+strategies = create_v3_strategy_grid(
+    initial_capitals=[10000, 25000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0, 0.05],
+)
+```
+
+## See Also
+
+- [Strategy Parameter Grids](/concepts/architecture/strategy-parameter-grids)
+- [V3 Tutorial](/tutorials/intermediate/uniswap-v3-backtesting)

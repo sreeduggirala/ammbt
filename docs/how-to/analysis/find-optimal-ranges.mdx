@@ -1,0 +1,74 @@
+---
+title: "Find Optimal Ranges"
+description: "Identify optimal tick/bin ranges for LP positions"
+---
+
+# Find Optimal Ranges
+
+## Grid Search
+
+```python
+from ammbt.utils import generate_tick_ranges
+
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.02, 0.05, 0.10, 0.15, 0.20, 0.30, 0.50],
+)
+
+strategies = create_v3_strategy_grid(
+    initial_capitals=[25000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0],
+)
+
+result = bt.run(swaps, strategies)
+```
+
+## Analyze by Width
+
+```python
+result.metrics['range_width'] = (
+    result.metrics['tick_upper'] - result.metrics['tick_lower']
+)
+
+by_width = result.metrics.groupby('range_width').agg({
+    'net_pnl': 'mean',
+    'sharpe': 'mean',
+    'time_in_position': 'mean',
+}).round(2)
+
+print(by_width.sort_values('sharpe', ascending=False))
+```
+
+## Optimal Width
+
+```python
+optimal = by_width['sharpe'].idxmax()
+print(f"Optimal range width: {optimal} ticks")
+
+# Convert to percentage
+from ammbt.utils import tick_to_price
+lower_price = tick_to_price(-optimal // 2)
+upper_price = tick_to_price(optimal // 2)
+width_pct = (upper_price / lower_price - 1) * 100
+print(f"Approximately ±{width_pct/2:.1f}%")
+```
+
+## Visualize
+
+```python
+import plotly.express as px
+
+fig = px.scatter(
+    result.metrics,
+    x='range_width',
+    y='sharpe',
+    size='time_in_position',
+    title='Sharpe vs Range Width'
+)
+fig.show()
+```
+
+## See Also
+
+- [Strategy Optimization](/tutorials/intermediate/strategy-optimization)

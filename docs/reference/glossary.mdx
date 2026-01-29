@@ -1,0 +1,126 @@
+---
+title: "Glossary"
+description: "Key terms and definitions"
+---
+
+# Glossary
+
+## A
+
+**AMM (Automated Market Maker)**
+A decentralized exchange protocol that uses mathematical formulas to price assets instead of order books.
+
+**Active Bin**
+In DLMM, the bin containing the current price where trades occur.
+
+## B
+
+**Bin**
+A discrete price level in DLMM where liquidity can be placed.
+
+**Bin Step**
+The percentage price difference between adjacent bins in DLMM.
+
+## C
+
+**CLMM (Concentrated Liquidity Market Maker)**
+AMM design where LPs can concentrate liquidity in specific price ranges (e.g., Uniswap V3).
+
+**CPAMM (Constant Product AMM)**
+AMM using x*y=k formula with liquidity spread across all prices (e.g., Uniswap V2).
+
+**Concentrated Liquidity**
+Providing liquidity only within a specific price range for higher capital efficiency.
+
+## D
+
+**DLMM (Dynamic Liquidity Market Maker)**
+Meteora's AMM design with discrete bins and dynamic fees.
+
+**Drawdown**
+The decline from peak to trough in portfolio value.
+
+## F
+
+**Fee Growth**
+Accumulated trading fees per unit of liquidity, used for fee calculation in V3.
+
+**Fee Tier**
+The swap fee percentage in V3 (0.05%, 0.30%, or 1.00%).
+
+## I
+
+**Impermanent Loss (IL)**
+The difference in value between holding tokens in an LP position vs. holding them directly.
+
+**In Range**
+A V3/DLMM position where the current price is within the specified bounds.
+
+## L
+
+**Liquidity**
+Capital deposited in an AMM pool that enables trading.
+
+**Liquidity Provider (LP)**
+Someone who deposits tokens into an AMM pool to earn trading fees.
+
+**LP Tokens**
+Tokens representing share of liquidity in a pool (V2).
+
+## M
+
+**Max Drawdown**
+The largest peak-to-trough decline during the backtest period.
+
+## N
+
+**Numba**
+JIT compiler used by ammBT for performance optimization.
+
+## O
+
+**Out of Range**
+A V3/DLMM position where the current price is outside the specified bounds (not earning fees).
+
+## P
+
+**Position**
+An LP's stake in a pool, defined by amount and range (V3/DLMM).
+
+**Price**
+The exchange rate between two tokens (typically token1/token0).
+
+## R
+
+**Rebalancing**
+Adjusting an LP position, typically to recenter the range around current price.
+
+**Reserves**
+The amounts of each token held in a pool.
+
+## S
+
+**Sharpe Ratio**
+Risk-adjusted return metric: (return - risk-free rate) / volatility.
+
+**Slippage**
+The difference between expected and executed trade price.
+
+**Swap**
+An exchange of one token for another through the AMM.
+
+## T
+
+**Tick**
+A discrete price point in V3, representing 0.01% price change.
+
+**Tick Spacing**
+The minimum distance between usable ticks, determined by fee tier.
+
+## V
+
+**Vectorized**
+Processing multiple data points simultaneously using array operations.
+
+**Volatility**
+The degree of price variation over time.

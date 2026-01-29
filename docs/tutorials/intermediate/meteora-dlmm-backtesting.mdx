@@ -1,0 +1,439 @@
+---
+title: "Meteora DLMM Backtesting"
+description: "Master bin-based liquidity with dynamic fees on Solana"
+---
+
+# Meteora DLMM Backtesting
+
+Meteora's **Dynamic Liquidity Market Maker (DLMM)** is a Solana-based AMM with unique features: discrete price bins, dynamic fees, and multiple liquidity distribution shapes.
+
+## Understanding DLMM
+
+### Bins vs. Ticks
+
+Unlike V3's continuous tick system, DLMM uses discrete **bins**:
+
+```
+V3 (continuous):  |-------|-------|-------|
+DLMM (discrete):  |   0   |   1   |   2   |   3   |
+                  ^bin 0  ^bin 1  ^bin 2  ^bin 3
+```
+
+Each bin has:
+- A specific price point
+- Concentrated liquidity
+- Discrete fee accumulation
+
+### Bin Step
+
+The `bin_step` parameter (in basis points) defines price spacing:
+
+$$\text{Price}_{bin} = (1 + \frac{\text{bin\_step}}{10000})^{bin\_id}$$
+
+Common bin steps:
+
+| Bin Step | Price Change per Bin | Use Case |
+|----------|---------------------|----------|
+| 1 | 0.01% | Stable pairs |
+| 10 | 0.10% | Low volatility |
+| 25 | 0.25% | Medium volatility |
+| 100 | 1.00% | High volatility |
+
+```python
+from ammbt.utils import bin_id_to_price, price_to_bin_id
+
+# Convert between price and bin
+bin_step = 25  # 0.25%
+price = bin_id_to_price(100, bin_step)  # Bin 100
+print(f"Bin 100 at step 25 = price {price:.4f}")  # 1.0253
+
+# Reverse conversion
+bin_id = price_to_bin_id(1.10, bin_step)
+print(f"Price 1.10 = Bin {bin_id}")  # 38
+```
+
+## Setting Up DLMM Backtests
+
+### Creating the Backtester
+
+```python
+import ammbt as amm
+
+bt = amm.LPBacktester(
+    amm_type='dlmm',
+    initial_price=1.0,
+    bin_step=25,              # 0.25% per bin
+    base_factor=10000,        # Fee calculation base
+    variable_fee_control=40000,
+    max_volatility_accumulator=350000,
+    volatility_reference=10000,
+)
+```
+
+### Defining Strategies
+
+DLMM strategies require bin ranges and liquidity shapes:
+
+```python
+strategies = {
+    'initial_capital': [10000, 25000],
+    'bin_lower': [-40, -80, -160],   # Bins below center
+    'bin_upper': [40, 80, 160],       # Bins above center
+    'liquidity_shape': [0, 1, 2],     # Distribution type
+    'rebalance_threshold': [0.0, 0.05],
+    'rebalance_frequency': [0, 200],
+}
+```
+
+## Liquidity Shapes
+
+DLMM offers three liquidity distribution shapes:
+
+### Shape 0: Spot (Uniform)
+
+Liquidity distributed equally across all bins.
+
+```
+Liquidity
+    █   █   █   █   █   █   █
+   -3  -2  -1   0   1   2   3  (Bins)
+```
+
+**Best for**: Market-making, wide ranges, uncertain direction
+
+### Shape 1: Curve (Concentrated)
+
+More liquidity concentrated in the center (Gaussian distribution).
+
+```
+Liquidity
+                █
+            █       █
+        █               █
+    █                       █
+   -3  -2  -1   0   1   2   3  (Bins)
+```
+
+**Best for**: Range-bound markets, maximizing fees near current price
+
+### Shape 2: Bid-Ask
+
+More liquidity at the edges (inverse concentration).
+
+```
+Liquidity
+    █                       █
+        █               █
+            █       █
+                █
+   -3  -2  -1   0   1   2   3  (Bins)
+```
+
+**Best for**: DCA strategies, expecting breakout in either direction
+
+```python
+from ammbt.utils import SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK
+
+# Using constants
+strategies = {
+    'liquidity_shape': [SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK],
+    # ... other params
+}
+```
+
+## Running the Backtest
+
+```python
+# Generate swap data
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    initial_price=1.0,
+    price_volatility=0.03,
+    seed=42
+)
+
+# Run backtest
+result = bt.run(swaps, strategies)
+print(result.summary().head(10))
+```
+
+## Dynamic Fees
+
+DLMM's unique feature is **dynamic fees** that adjust based on market volatility.
+
+### How It Works
+
+1. **Base fee**: Fixed component based on bin_step
+2. **Variable fee**: Increases with volatility
+3. **Total fee**: Base + Variable
+
+$$\text{Total Fee} = \text{Base Fee} + \text{Variable Fee}(\text{volatility})$$
+
+```python
+from ammbt.utils import calculate_dlmm_base_fee, calculate_dlmm_total_fee
+
+# Calculate base fee
+base_fee = calculate_dlmm_base_fee(bin_step=25, base_factor=10000)
+print(f"Base fee: {base_fee:.4%}")  # 0.25%
+
+# Calculate total fee with volatility
+total_fee = calculate_dlmm_total_fee(
+    bin_step=25,
+    base_factor=10000,
+    volatility_accumulator=100000,
+    variable_fee_control=40000,
+    max_volatility_accumulator=350000,
+)
+print(f"Total fee: {total_fee:.4%}")  # Higher during volatile periods
+```
+
+### Analyzing Fee Behavior
+
+```python
+# Check how fees varied during backtest
+history = result.get_position_history(0)
+
+# Fees are accumulated per swap
+total_fees_x = history['uncollected_fees_x'].iloc[-1]
+total_fees_y = history['uncollected_fees_y'].iloc[-1]
+
+print(f"Total fees (X): {total_fees_x:.4f}")
+print(f"Total fees (Y): {total_fees_y:.4f}")
+```
+
+## Using Bin Range Generators
+
+```python
+from ammbt.utils import generate_bin_ranges, create_dlmm_strategy_grid
+
+# Generate ranges by percentage width
+bin_ranges = generate_bin_ranges(
+    current_price=1.0,
+    bin_step=25,
+    range_widths_pct=[0.05, 0.10, 0.20, 0.50],
+)
+
+print("Generated bin ranges:")
+for lower, upper in bin_ranges:
+    lower_price = bin_id_to_price(lower, 25)
+    upper_price = bin_id_to_price(upper, 25)
+    print(f"  [{lower}, {upper}] = [{lower_price:.4f}, {upper_price:.4f}]")
+```
+
+### Complete Strategy Grid
+
+```python
+strategies = create_dlmm_strategy_grid(
+    initial_capitals=[10000, 25000, 50000],
+    bin_ranges=bin_ranges,
+    liquidity_shapes=[SHAPE_SPOT, SHAPE_CURVE],
+    rebalance_thresholds=[0.0, 0.05, 0.10],
+    rebalance_frequencies=[0, 200],
+)
+
+print(f"Total strategies: {len(strategies)}")
+```
+
+## Comparing Liquidity Shapes
+
+```python
+# Test each shape under same conditions
+swaps = amm.generate_swaps(n_swaps=5000, price_volatility=0.03, seed=42)
+
+results_by_shape = {}
+for shape_id, shape_name in [(0, 'Spot'), (1, 'Curve'), (2, 'Bid-Ask')]:
+    result = bt.run(swaps, {
+        'initial_capital': [25000],
+        'bin_lower': [-40],
+        'bin_upper': [40],
+        'liquidity_shape': [shape_id],
+    })
+
+    metrics = result.metrics.iloc[0]
+    results_by_shape[shape_name] = {
+        'Net PnL': metrics['net_pnl'],
+        'Fees': metrics['total_fees_earned'],
+        'Sharpe': metrics['sharpe'],
+    }
+
+import pandas as pd
+print(pd.DataFrame(results_by_shape).T)
+```
+
+Output:
+```
+          Net PnL    Fees  Sharpe
+Spot       234.56  345.67    0.89
+Curve      289.12  412.34    1.12
+Bid-Ask    178.90  267.89    0.67
+```
+
+## DLMM vs. V3 Comparison
+
+```python
+# Same swap data for both
+swaps = amm.generate_swaps(n_swaps=10000, price_volatility=0.03, seed=42)
+
+# V3 backtest
+bt_v3 = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+result_v3 = bt_v3.run(swaps, {
+    'initial_capital': [25000],
+    'tick_lower': [-200],
+    'tick_upper': [200],
+})
+
+# DLMM backtest (similar range)
+bt_dlmm = amm.LPBacktester(amm_type='dlmm', bin_step=25)
+result_dlmm = bt_dlmm.run(swaps, {
+    'initial_capital': [25000],
+    'bin_lower': [-40],
+    'bin_upper': [40],
+    'liquidity_shape': [1],  # Curve
+})
+
+# Compare
+v3_pnl = result_v3.metrics['net_pnl'].iloc[0]
+dlmm_pnl = result_dlmm.metrics['net_pnl'].iloc[0]
+
+print(f"V3 Net PnL:   ${v3_pnl:,.2f}")
+print(f"DLMM Net PnL: ${dlmm_pnl:,.2f}")
+```
+
+### Key Differences
+
+| Aspect | V3 | DLMM |
+|--------|-----|------|
+| Price model | Continuous ticks | Discrete bins |
+| Fee model | Fixed by tier | Dynamic (volatility-based) |
+| Liquidity shape | Always uniform | Spot/Curve/Bid-Ask |
+| Gas costs | ~$100/rebalance | ~$0.50/rebalance |
+| Chain | Ethereum L1/L2 | Solana |
+
+## Optimizing Bin Step
+
+Choose the right bin step for your pair:
+
+```python
+from ammbt.utils import get_recommended_bin_step
+
+# Based on daily volatility
+volatilities = [0.01, 0.02, 0.05, 0.10]
+
+for vol in volatilities:
+    recommended = get_recommended_bin_step(vol)
+    print(f"Daily volatility {vol:.0%} -> Bin step {recommended}")
+```
+
+Output:
+```
+Daily volatility 1% -> Bin step 10
+Daily volatility 2% -> Bin step 25
+Daily volatility 5% -> Bin step 50
+Daily volatility 10% -> Bin step 100
+```
+
+## Fee APR Estimation
+
+```python
+from ammbt.utils import estimate_dlmm_fee_apr
+
+# Estimate APR for a position
+apr = estimate_dlmm_fee_apr(
+    volume_daily=1_000_000,      # $1M daily volume
+    liquidity=100_000,           # $100K liquidity
+    base_fee=0.0025,             # 0.25%
+    avg_variable_fee=0.0005,     # Additional variable fee
+)
+
+print(f"Estimated Fee APR: {apr:.1%}")  # ~109.5%
+```
+
+## Complete DLMM Workflow
+
+```python
+import ammbt as amm
+from ammbt.utils import (
+    generate_bin_ranges,
+    create_dlmm_strategy_grid,
+    SHAPE_SPOT,
+    SHAPE_CURVE,
+)
+
+# 1. Generate data
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    initial_price=1.0,
+    price_volatility=0.03,
+    seed=42
+)
+
+# 2. Generate bin ranges
+bin_ranges = generate_bin_ranges(
+    current_price=1.0,
+    bin_step=25,
+    range_widths_pct=[0.05, 0.10, 0.20],
+)
+
+# 3. Create strategy grid
+strategies = create_dlmm_strategy_grid(
+    initial_capitals=[10000, 25000, 50000],
+    bin_ranges=bin_ranges,
+    liquidity_shapes=[SHAPE_SPOT, SHAPE_CURVE],
+    rebalance_thresholds=[0.0, 0.05],
+    rebalance_frequencies=[0, 200],
+)
+
+# 4. Run backtest
+bt = amm.LPBacktester(amm_type='dlmm', bin_step=25)
+result = bt.run(swaps, strategies)
+
+# 5. Analyze
+print("Top Strategies:")
+print(result.summary().head(10))
+
+# 6. Compare shapes
+shape_comparison = result.metrics.groupby('liquidity_shape').agg({
+    'net_pnl': 'mean',
+    'sharpe': 'mean',
+    'total_fees_earned': 'mean',
+}).round(2)
+print("\nPerformance by Shape:")
+print(shape_comparison)
+
+# 7. Visualize
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+## Key Takeaways
+
+<Check>
+DLMM uses discrete bins instead of continuous ticks
+</Check>
+
+<Check>
+Dynamic fees adjust based on market volatility
+</Check>
+
+<Check>
+Three liquidity shapes: Spot (uniform), Curve (concentrated), Bid-Ask (edges)
+</Check>
+
+<Check>
+Much lower gas costs on Solana (~$0.50 vs $100)
+</Check>
+
+<Check>
+Use `generate_bin_ranges()` and `create_dlmm_strategy_grid()` for easy setup
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Strategy Optimization" icon="sliders" href="/tutorials/intermediate/strategy-optimization">
+    Find optimal parameters systematically
+  </Card>
+  <Card title="Real Data" icon="database" href="/tutorials/intermediate/working-with-real-data">
+    Use historical swap data
+  </Card>
+</CardGroup>

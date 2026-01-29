@@ -1,0 +1,225 @@
+---
+title: "Installation"
+description: "Install ammBT and configure your environment"
+---
+
+# Installation
+
+ammBT requires Python 3.9 or higher and works on macOS, Linux, and Windows.
+
+## Quick Install
+
+Install ammBT using pip:
+
+```bash
+pip install ammbt
+```
+
+## Dependencies
+
+ammBT automatically installs these core dependencies:
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `numpy` | >=1.24 | Array operations and vectorization |
+| `pandas` | >=2.0 | DataFrames and time series |
+| `numba` | >=0.58 | JIT compilation for performance |
+| `plotly` | >=5.18 | Interactive visualizations |
+
+### Optional Dependencies
+
+Install optional features as needed:
+
+```bash
+# For loading data from Uniswap subgraphs
+pip install ammbt[subgraph]
+
+# For Solana/Meteora data
+pip install ammbt[solana]
+
+# For all optional dependencies
+pip install ammbt[all]
+```
+
+<Accordion title="Optional dependency details">
+
+| Extra | Packages | Use Case |
+|-------|----------|----------|
+| `subgraph` | `gql`, `aiohttp` | Query The Graph subgraphs |
+| `solana` | `solana`, `anchorpy` | Solana RPC and Meteora data |
+| `dune` | `dune-client` | Dune Analytics queries |
+| `jupyter` | `jupyterlab`, `ipywidgets` | Interactive notebooks |
+| `dev` | `pytest`, `black`, `mypy` | Development tools |
+
+</Accordion>
+
+## Verify Installation
+
+Verify your installation is working:
+
+```python
+import ammbt as amm
+
+# Check version
+print(f"ammBT version: {amm.__version__}")
+
+# Run a quick test
+swaps = amm.generate_swaps(n_swaps=100, seed=42)
+bt = amm.LPBacktester(amm_type='v2')
+result = bt.run(swaps, {'initial_capital': [10000]})
+
+print(f"Net PnL: ${result.metrics['net_pnl'].iloc[0]:.2f}")
+print("Installation successful!")
+```
+
+Expected output:
+
+```
+ammBT version: 0.1.0
+Net PnL: $42.15
+Installation successful!
+```
+
+## Development Installation
+
+For contributing or development:
+
+```bash
+# Clone the repository
+git clone https://github.com/your-org/ammbt.git
+cd ammbt
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+
+# Install in development mode with all dependencies
+pip install -e ".[all,dev]"
+
+# Run tests to verify
+pytest tests/
+```
+
+## Numba Configuration
+
+ammBT uses Numba for JIT compilation. The first run may be slower as functions are compiled, but subsequent runs are fast.
+
+### Caching
+
+By default, Numba caches compiled functions. To configure:
+
+```python
+from ammbt.utils import Config
+
+# Enable/disable caching (default: True)
+Config.set("numba.cache", True)
+
+# Enable parallel execution (default: False)
+Config.set("numba.parallel", False)
+
+# Enable fast math optimizations (default: True)
+Config.set("numba.fastmath", True)
+```
+
+### Troubleshooting Numba
+
+<Accordion title="Numba compilation errors">
+
+If you encounter Numba compilation errors:
+
+1. **Update Numba**: `pip install --upgrade numba`
+
+2. **Clear cache**: Delete the `__pycache__` directories
+
+3. **Disable cache temporarily**:
+   ```python
+   import os
+   os.environ['NUMBA_CACHE_DIR'] = ''
+   ```
+
+4. **Check LLVM**: Ensure LLVM is properly installed
+   ```bash
+   python -c "import numba; print(numba.__version__)"
+   ```
+
+</Accordion>
+
+<Accordion title="Performance issues on Apple Silicon">
+
+For optimal performance on Apple Silicon (M1/M2/M3):
+
+```bash
+# Install with ARM64 optimizations
+pip install --upgrade numpy numba
+
+# Verify ARM64
+python -c "import numpy; print(numpy.show_config())"
+```
+
+Ensure you see `accelerate` framework in the output.
+
+</Accordion>
+
+## Platform-Specific Notes
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    # Recommended: Use Homebrew Python
+    brew install python@3.11
+    pip3 install ammbt
+    ```
+
+    For Apple Silicon, ensure you're using native ARM64 Python, not Rosetta.
+  </Tab>
+
+  <Tab title="Linux">
+    ```bash
+    # Ubuntu/Debian
+    sudo apt update
+    sudo apt install python3-pip python3-venv
+    pip3 install ammbt
+    ```
+
+    For production servers, consider using `pyenv` for Python version management.
+  </Tab>
+
+  <Tab title="Windows">
+    ```powershell
+    # Install Python from python.org
+    # Then in PowerShell or Command Prompt:
+    pip install ammbt
+    ```
+
+    For WSL2 users, the Linux instructions apply.
+  </Tab>
+</Tabs>
+
+## Docker
+
+Run ammBT in a Docker container:
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install ammbt[all]
+
+COPY your_script.py .
+
+CMD ["python", "your_script.py"]
+```
+
+Build and run:
+
+```bash
+docker build -t ammbt-app .
+docker run ammbt-app
+```
+
+## What's Next?
+
+<Card title="Quickstart" icon="play" href="/getting-started/quickstart">
+  Run your first backtest in 5 minutes
+</Card>

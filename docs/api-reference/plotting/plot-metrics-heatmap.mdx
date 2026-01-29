@@ -1,0 +1,63 @@
+---
+title: "plot_metrics_heatmap"
+description: "Visualize metrics across 2D parameter space"
+---
+
+# plot_metrics_heatmap
+
+Create a heatmap showing how a metric varies across two strategy parameters.
+
+## Signature
+
+```python
+def plot_metrics_heatmap(
+    result: BacktestResult,
+    x_param: str = 'rebalance_threshold',
+    y_param: str = 'initial_capital',
+    metric: str = 'net_pnl',
+) -> go.Figure
+```
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `result` | BacktestResult | - | Backtest result object |
+| `x_param` | str | 'rebalance_threshold' | Parameter for x-axis |
+| `y_param` | str | 'initial_capital' | Parameter for y-axis |
+| `metric` | str | 'net_pnl' | Metric to visualize |
+
+## Returns
+
+`plotly.graph_objects.Figure` - Interactive heatmap.
+
+## Available Metrics
+
+- `net_pnl` - Net profit/loss
+- `total_return_pct` - Return percentage
+- `sharpe` - Sharpe ratio
+- `max_drawdown_pct` - Maximum drawdown
+- `total_fees_earned` - Fee income
+- `time_in_position` - Time in range
+
+## Example
+
+```python
+import ammbt as amm
+
+result = bt.run(swaps, strategies)
+
+# Sharpe by tick range
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='tick_upper',
+    y_param='tick_lower',
+    metric='sharpe'
+)
+fig.show()
+```
+
+## See Also
+
+- [plot_efficient_frontier](/api-reference/plotting/plot-efficient-frontier)
+- [Strategy Optimization](/tutorials/intermediate/strategy-optimization)

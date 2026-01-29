@@ -1,0 +1,61 @@
+---
+title: "Solana Pools"
+description: "Analyzing Meteora pools on Solana"
+---
+
+# Solana Pools
+
+Example of backtesting with Solana pool data characteristics.
+
+```python
+import ammbt as amm
+
+# Simulate Solana pool characteristics
+# - More swaps (faster block times)
+# - Lower gas costs
+swaps = amm.generate_swaps(
+    n_swaps=50000,  # More activity
+    initial_price=100.0,  # SOL-USDC example
+    price_volatility=0.04,
+    time_between_swaps=1,  # ~1 second blocks
+    seed=42
+)
+
+# DLMM strategies
+strategies = {
+    'initial_capital': [1000, 5000, 10000],
+    'bin_lower': [-20, -40, -80],
+    'bin_upper': [20, 40, 80],
+    'liquidity_shape': [0, 1],
+    'rebalance_threshold': [0.0, 0.03, 0.05],
+}
+
+bt = amm.LPBacktester(
+    amm_type='dlmm',
+    initial_price=100.0,
+    bin_step=25,
+)
+
+result = bt.run(swaps, strategies)
+
+# Key advantage: low gas costs allow more rebalancing
+by_rebalance = result.metrics.groupby('rebalance_threshold').agg({
+    'net_pnl': 'mean',
+    'num_rebalances': 'mean',
+    'gas_spent': 'mean',
+})
+print("Performance by Rebalance Threshold:")
+print(by_rebalance)
+
+# Note: Gas costs ~$0.50 per rebalance on Solana vs ~$100 on Ethereum
+```
+
+## Solana Advantages
+
+- ~$0.50 gas per rebalance
+- Faster block times
+- More frequent optimization possible
+
+## See Also
+
+- [Load Solana Data](/how-to/data/load-solana-data)

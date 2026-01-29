@@ -1,0 +1,349 @@
+---
+title: "DLMM - Meteora"
+description: "Understanding Dynamic Liquidity Market Makers on Solana"
+---
+
+# DLMM - Meteora
+
+**Dynamic Liquidity Market Maker (DLMM)** is Meteora's concentrated liquidity implementation on Solana. It uses discrete **bins** instead of continuous ticks and features **dynamic fees** that adjust based on market volatility.
+
+## Key Differences from V3
+
+| Feature | Uniswap V3 | Meteora DLMM |
+|---------|------------|--------------|
+| Price model | Continuous ticks | Discrete bins |
+| Fee model | Fixed per tier | Dynamic (volatility-based) |
+| Liquidity shapes | Uniform only | Spot, Curve, Bid-Ask |
+| Chain | Ethereum/L2s | Solana |
+| Gas costs | ~$100/rebalance | ~$0.50/rebalance |
+
+## Bins vs Ticks
+
+### Continuous Ticks (V3)
+
+```
+Price
+  │     Position
+  │    ┌───────┐
+  │────│       │────────
+  │    │       │
+  │    └───────┘
+  └─────────────────────> tick
+       lower   upper
+```
+
+### Discrete Bins (DLMM)
+
+```
+Price
+  │  [Bin -2] [Bin -1] [Bin 0] [Bin 1] [Bin 2]
+  │     █         █        █       █       █
+  │     │         │        │       │       │
+  └─────────────────────────────────────────────>
+```
+
+Each bin holds liquidity at a specific price point.
+
+## Bin Step
+
+The **bin step** determines price spacing between bins (in basis points):
+
+$$P_{bin} = (1 + \frac{\text{bin\_step}}{10000})^{bin\_id}$$
+
+Common bin steps:
+
+| Bin Step | Price Change | Use Case |
+|----------|--------------|----------|
+| 1 | 0.01% | Stable pairs |
+| 10 | 0.10% | Low volatility |
+| 25 | 0.25% | Medium volatility |
+| 50 | 0.50% | High volatility |
+| 100 | 1.00% | Very volatile |
+
+```python
+from ammbt.utils import bin_id_to_price, price_to_bin_id
+
+# At bin_step = 25 (0.25%)
+bin_id_to_price(0, 25)    # 1.0
+bin_id_to_price(100, 25)  # 1.0253
+bin_id_to_price(-100, 25) # 0.9753
+```
+
+## Active Bin
+
+The **active bin** is where the current price sits. Only liquidity in the active bin earns fees on a given swap:
+
+```
+                Active Bin
+                    ▼
+[Bin -2] [Bin -1] [Bin 0] [Bin 1] [Bin 2]
+   █         █       █←──    █       █
+                  (Current)
+```
+
+When price moves enough, the active bin shifts.
+
+## Dynamic Fees
+
+DLMM's signature feature: fees adjust based on volatility.
+
+### Fee Components
+
+$$\text{Total Fee} = \text{Base Fee} + \text{Variable Fee}$$
+
+**Base Fee**: Fixed component based on bin step
+
+$$\text{Base Fee} = \frac{\text{bin\_step} \times \text{base\_factor}}{10^{10}}$$
+
+**Variable Fee**: Increases with volatility
+
+$$\text{Variable Fee} = f(\text{volatility\_accumulator})$$
+
+### Volatility Accumulator
+
+Tracks recent price movement intensity:
+
+- **Increases** when price crosses bins rapidly
+- **Decays** over time (decay_period)
+- **Capped** at max_volatility_accumulator
+
+```python
+# Higher volatility = higher fees
+# More swaps crossing bins = higher volatility accumulator
+# Time passage = decay toward zero
+```
+
+### Benefits
+
+- **Protects LPs** during volatile periods
+- **Lower fees** in calm markets (attracts volume)
+- **Automatic adjustment** without manual intervention
+
+## Liquidity Shapes
+
+DLMM allows three distribution shapes:
+
+### Shape 0: Spot (Uniform)
+
+Equal liquidity in every bin:
+
+```
+█   █   █   █   █   █   █
+-3  -2  -1   0   1   2   3
+```
+
+**Best for**: Market making, wide ranges
+
+### Shape 1: Curve (Concentrated)
+
+More liquidity near center (Gaussian):
+
+```
+            █
+        █       █
+    █               █
+█                       █
+-3  -2  -1   0   1   2   3
+```
+
+**Best for**: Range-bound markets, maximizing fees
+
+### Shape 2: Bid-Ask
+
+More liquidity at edges:
+
+```
+█                       █
+    █               █
+        █       █
+            █
+-3  -2  -1   0   1   2   3
+```
+
+**Best for**: DCA strategies, expected breakout
+
+```python
+from ammbt.utils import SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK
+
+# Use in strategies
+strategies = {
+    'liquidity_shape': [SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK],
+}
+```
+
+## DLMM in ammBT
+
+### Creating a DLMM Backtester
+
+```python
+import ammbt as amm
+
+bt = amm.LPBacktester(
+    amm_type='dlmm',
+    initial_price=1.0,
+    bin_step=25,
+    base_factor=10000,
+    variable_fee_control=40000,
+    max_volatility_accumulator=350000,
+    volatility_reference=10000,
+    decay_period=600,  # seconds
+)
+```
+
+### DLMM Strategy Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `initial_capital` | float | Capital to provide |
+| `bin_lower` | int | Lower bin bound |
+| `bin_upper` | int | Upper bin bound |
+| `liquidity_shape` | int | 0=Spot, 1=Curve, 2=Bid-Ask |
+| `rebalance_threshold` | float | Price deviation trigger |
+| `rebalance_frequency` | int | Min swaps between rebalances |
+
+### Example Backtest
+
+```python
+from ammbt.utils import generate_bin_ranges, create_dlmm_strategy_grid
+
+# Generate bin ranges
+bin_ranges = generate_bin_ranges(
+    current_price=1.0,
+    bin_step=25,
+    range_widths_pct=[0.05, 0.10, 0.20],
+)
+
+# Create strategy grid
+strategies = create_dlmm_strategy_grid(
+    initial_capitals=[10000, 25000],
+    bin_ranges=bin_ranges,
+    liquidity_shapes=[SHAPE_SPOT, SHAPE_CURVE],
+    rebalance_thresholds=[0.0, 0.05],
+)
+
+result = bt.run(swaps, strategies)
+```
+
+## DLMM Position Structure
+
+```python
+DLMM_POSITION_DTYPE = np.dtype([
+    ('bin_lower', 'i4'),
+    ('bin_upper', 'i4'),
+    ('liquidity', 'f8'),
+    ('liquidity_shape', 'i4'),
+    ('token_x_balance', 'f8'),
+    ('token_y_balance', 'f8'),
+    ('uncollected_fees_x', 'f8'),
+    ('uncollected_fees_y', 'f8'),
+    ('fee_growth_global_x', 'f8'),
+    ('fee_growth_global_y', 'f8'),
+    ('is_active', '?'),
+    ('is_in_range', '?'),
+    ('gas_spent', 'f8'),
+    ('last_rebalance_idx', 'i4'),
+    ('num_rebalances', 'i4'),
+])
+```
+
+## Choosing Bin Step
+
+```python
+from ammbt.utils import get_recommended_bin_step
+
+# Based on expected daily volatility
+volatility = 0.03  # 3% daily volatility
+recommended = get_recommended_bin_step(volatility)
+print(f"Recommended bin step: {recommended}")  # 25
+```
+
+Guidelines:
+
+| Daily Volatility | Bin Step |
+|-----------------|----------|
+| < 1% | 10 |
+| 1-2% | 25 |
+| 2-5% | 50 |
+| 5-10% | 100 |
+| > 10% | 100+ |
+
+## Fee APR Estimation
+
+```python
+from ammbt.utils import estimate_dlmm_fee_apr
+
+# Estimate APR
+apr = estimate_dlmm_fee_apr(
+    volume_daily=1_000_000,   # $1M daily volume
+    liquidity=100_000,        # $100K in position
+    base_fee=0.0025,          # 0.25% base
+    avg_variable_fee=0.0005,  # 0.05% avg variable
+)
+
+print(f"Estimated APR: {apr:.1%}")  # ~109.5%
+```
+
+## Comparing Shapes
+
+```python
+# Test each shape with same parameters
+results = {}
+for shape_id, name in [(0, 'Spot'), (1, 'Curve'), (2, 'Bid-Ask')]:
+    result = bt.run(swaps, {
+        'initial_capital': [25000],
+        'bin_lower': [-40],
+        'bin_upper': [40],
+        'liquidity_shape': [shape_id],
+    })
+    results[name] = result.metrics.iloc[0]
+
+# Compare
+import pandas as pd
+comparison = pd.DataFrame(results).T
+print(comparison[['net_pnl', 'total_fees_earned', 'sharpe']])
+```
+
+## DLMM vs V3 Trade-offs
+
+### Advantages of DLMM
+
+<Check>
+**Dynamic fees** protect during volatility
+</Check>
+
+<Check>
+**Multiple shapes** for different strategies
+</Check>
+
+<Check>
+**Much lower gas** on Solana
+</Check>
+
+<Check>
+**Discrete bins** are easier to reason about
+</Check>
+
+### Disadvantages of DLMM
+
+<Warning>
+**Less precise ranges** (bins, not continuous)
+</Warning>
+
+<Warning>
+**Solana-only** (ecosystem constraints)
+</Warning>
+
+<Warning>
+**Different tooling** from EVM world
+</Warning>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Impermanent Loss" icon="chart-line-down" href="/concepts/amm-fundamentals/impermanent-loss">
+    Understand IL in depth
+  </Card>
+  <Card title="DLMM Tutorial" icon="play" href="/tutorials/intermediate/meteora-dlmm-backtesting">
+    Hands-on DLMM backtesting
+  </Card>
+</CardGroup>

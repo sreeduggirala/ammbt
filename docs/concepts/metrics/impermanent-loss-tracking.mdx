@@ -1,0 +1,285 @@
+---
+title: "Impermanent Loss Tracking"
+description: "How ammBT tracks and calculates impermanent loss"
+---
+
+# Impermanent Loss Tracking
+
+ammBT tracks impermanent loss throughout the simulation, allowing you to understand how IL evolves and impacts your strategy.
+
+## IL Calculation Methods
+
+### Point-in-Time IL
+
+Calculate IL at any point in the simulation:
+
+```python
+def calculate_il_at_time(position, initial_capital, initial_price, current_price):
+    """Calculate IL at a specific point."""
+
+    # Hold strategy value
+    initial_token0 = initial_capital / 2 / initial_price
+    initial_token1 = initial_capital / 2
+    hold_value = initial_token0 * current_price + initial_token1
+
+    # LP value (excluding fees and gas for pure IL)
+    lp_value = position['token0_balance'] * current_price + position['token1_balance']
+
+    # IL
+    il = lp_value - hold_value
+
+    return il
+```
+
+### IL Over Time
+
+Track IL throughout the simulation:
+
+```python
+def calculate_il_series(history, swaps, initial_capital):
+    """Calculate IL at each swap."""
+
+    initial_price = swaps['price'].iloc[0]
+    prices = swaps['price'].values
+
+    # Initial holdings under hold strategy
+    initial_token0 = initial_capital / 2 / initial_price
+    initial_token1 = initial_capital / 2
+
+    # Hold value over time
+    hold_values = initial_token0 * prices + initial_token1
+
+    # LP value over time (excluding fees)
+    lp_values = history['token0_balance'] * prices + history['token1_balance']
+
+    # IL series
+    il_series = lp_values - hold_values
+
+    return il_series
+```
+
+## IL Attribution
+
+### Break Down IL Sources
+
+```python
+def attribute_il(result, swaps, strategy_idx=0):
+    """Break down IL into components."""
+
+    history = result.get_position_history(strategy_idx)
+    initial_capital = result.strategy_params['initial_capital'].iloc[strategy_idx]
+    initial_price = swaps['price'].iloc[0]
+    final_price = swaps['price'].iloc[-1]
+
+    # 1. Theoretical V2 IL (if full range, no rebalancing)
+    price_ratio = final_price / initial_price
+    theoretical_il_factor = 2 * np.sqrt(price_ratio) / (1 + price_ratio) - 1
+    theoretical_il = initial_capital * theoretical_il_factor
+
+    # 2. Actual IL
+    actual_il = result.metrics['impermanent_loss'].iloc[strategy_idx]
+
+    # 3. IL from rebalancing
+    # Each rebalance crystallizes current IL and resets
+    # This can be positive (locking in gains) or negative
+    rebalance_impact = actual_il - theoretical_il
+
+    # 4. Concentration factor (V3/DLMM)
+    # Narrower ranges amplify IL
+    if 'tick_lower' in result.strategy_params.columns:
+        tick_range = (
+            result.strategy_params['tick_upper'].iloc[strategy_idx] -
+            result.strategy_params['tick_lower'].iloc[strategy_idx]
+        )
+        # Approximate concentration factor
+        concentration = 10000 / tick_range  # Rough estimate
+
+    return {
+        'theoretical_il': theoretical_il,
+        'actual_il': actual_il,
+        'rebalance_impact': rebalance_impact,
+        'price_change': (final_price / initial_price - 1) * 100,
+    }
+```
+
+## IL vs Fees Analysis
+
+### Break-Even Analysis
+
+```python
+def analyze_il_vs_fees(result, swaps, strategy_idx=0):
+    """Compare IL to fee earnings."""
+
+    metrics = result.metrics.iloc[strategy_idx]
+
+    il = abs(metrics['impermanent_loss'])  # Make positive for comparison
+    fees = metrics['total_fees_earned']
+    gas = metrics['gas_spent']
+
+    # Net impact
+    net_position_pnl = fees - il - gas
+
+    # Ratios
+    fee_to_il_ratio = fees / il if il > 0 else float('inf')
+
+    # Time to break even (if profitable)
+    days = (swaps['timestamp'].iloc[-1] - swaps['timestamp'].iloc[0]) / 86400
+    if net_position_pnl > 0:
+        # Extrapolate current rate
+        fee_rate_per_day = fees / days
+        il_per_day = il / days
+        if fee_rate_per_day > il_per_day:
+            break_even_days = gas / (fee_rate_per_day - il_per_day)
+        else:
+            break_even_days = float('inf')
+    else:
+        break_even_days = float('inf')
+
+    return {
+        'impermanent_loss': il,
+        'fees_earned': fees,
+        'gas_spent': gas,
+        'net_pnl': net_position_pnl,
+        'fee_to_il_ratio': fee_to_il_ratio,
+        'break_even_days': break_even_days,
+        'is_profitable': net_position_pnl > 0,
+    }
+```
+
+## Visualizing IL
+
+### IL Over Time Plot
+
+```python
+def plot_il_over_time(result, swaps, strategy_idx=0):
+    """Plot IL evolution over time."""
+
+    history = result.get_position_history(strategy_idx)
+    initial_capital = result.strategy_params['initial_capital'].iloc[strategy_idx]
+
+    il_series = calculate_il_series(history, swaps, initial_capital)
+
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+
+    # IL line
+    fig.add_trace(go.Scatter(
+        y=il_series,
+        name='Impermanent Loss',
+        line=dict(color='red'),
+    ))
+
+    # Zero line
+    fig.add_hline(y=0, line_dash='dash', line_color='gray')
+
+    # Mark rebalance points
+    rebalance_mask = history['num_rebalances'].diff() > 0
+    rebalance_indices = history.index[rebalance_mask].tolist()
+
+    for idx in rebalance_indices:
+        fig.add_vline(x=idx, line_dash='dot', line_color='yellow',
+                      annotation_text='Rebalance')
+
+    fig.update_layout(
+        title='Impermanent Loss Over Time',
+        xaxis_title='Swap',
+        yaxis_title='IL (USD)',
+    )
+
+    return fig
+```
+
+### IL vs Price Change
+
+```python
+def plot_il_vs_price(result, swaps, strategy_idx=0):
+    """Plot IL against price changes."""
+
+    history = result.get_position_history(strategy_idx)
+    initial_capital = result.strategy_params['initial_capital'].iloc[strategy_idx]
+    initial_price = swaps['price'].iloc[0]
+
+    prices = swaps['price'].values
+    price_changes = (prices / initial_price - 1) * 100  # % change
+
+    il_series = calculate_il_series(history, swaps, initial_capital)
+    il_pct = (il_series / initial_capital) * 100
+
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=price_changes,
+        y=il_pct,
+        mode='markers',
+        marker=dict(size=3, opacity=0.5),
+        name='Actual IL',
+    ))
+
+    # Add theoretical IL curve
+    price_ratios = np.linspace(0.5, 2.0, 100)
+    theoretical_il = (2 * np.sqrt(price_ratios) / (1 + price_ratios) - 1) * 100
+    price_change_theoretical = (price_ratios - 1) * 100
+
+    fig.add_trace(go.Scatter(
+        x=price_change_theoretical,
+        y=theoretical_il,
+        mode='lines',
+        name='Theoretical IL (V2)',
+        line=dict(color='red', dash='dash'),
+    ))
+
+    fig.update_layout(
+        title='IL vs Price Change',
+        xaxis_title='Price Change (%)',
+        yaxis_title='IL (%)',
+    )
+
+    return fig
+```
+
+## IL Metrics in Results
+
+```python
+result = bt.run(swaps, strategies)
+
+# IL in absolute terms
+il_dollars = result.metrics['impermanent_loss']
+
+# IL as percentage
+il_pct = result.metrics['impermanent_loss'] / result.metrics['initial_capital'] * 100
+
+# Filter strategies with acceptable IL
+low_il = result.metrics[abs(result.metrics['impermanent_loss']) < 500]
+```
+
+## Key Insights
+
+<Check>
+IL is path-dependent - same start/end prices can have different IL based on path
+</Check>
+
+<Check>
+Rebalancing crystallizes IL but can reset exposure
+</Check>
+
+<Check>
+Concentrated positions (V3/DLMM) have amplified IL
+</Check>
+
+<Check>
+Fees must exceed IL + gas for profitability
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Capital Efficiency" icon="gauge" href="/concepts/metrics/capital-efficiency">
+    Measuring efficiency
+  </Card>
+  <Card title="Risk Metrics" icon="triangle-exclamation" href="/concepts/metrics/risk-metrics">
+    Drawdown and Sharpe
+  </Card>
+</CardGroup>

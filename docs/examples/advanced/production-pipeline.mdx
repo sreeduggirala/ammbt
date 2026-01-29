@@ -1,0 +1,106 @@
+---
+title: "Production Pipeline"
+description: "End-to-end backtesting workflow"
+---
+
+# Production Pipeline
+
+A complete production-ready backtesting workflow.
+
+```python
+import ammbt as amm
+from ammbt.utils import generate_tick_ranges, create_v3_strategy_grid
+import pandas as pd
+from datetime import datetime
+import json
+
+# 1. Configuration
+config = {
+    'pool': 'ETH-USDC',
+    'initial_price': 2000.0,
+    'fee_tier': 3000,
+    'data_source': 'synthetic',
+    'n_swaps': 50000,
+    'volatility': 0.03,
+}
+
+# 2. Load/Generate Data
+print(f"[{datetime.now()}] Loading data...")
+swaps = amm.generate_swaps(
+    n_swaps=config['n_swaps'],
+    initial_price=config['initial_price'],
+    price_volatility=config['volatility'],
+    seed=42
+)
+
+# 3. Generate Strategy Grid
+print(f"[{datetime.now()}] Creating strategy grid...")
+tick_ranges = generate_tick_ranges(
+    current_price=config['initial_price'],
+    range_widths_pct=[0.05, 0.10, 0.15, 0.20, 0.30],
+)
+
+strategies = create_v3_strategy_grid(
+    initial_capitals=[10000, 25000, 50000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0, 0.05, 0.10],
+    rebalance_frequencies=[0, 200],
+)
+
+print(f"Testing {len(strategies)} strategies")
+
+# 4. Run Backtest
+print(f"[{datetime.now()}] Running backtest...")
+bt = amm.LPBacktester(
+    amm_type='v3',
+    initial_price=config['initial_price'],
+    fee_tier=config['fee_tier'],
+)
+
+result = bt.run(swaps, strategies)
+
+# 5. Filter Results
+print(f"[{datetime.now()}] Analyzing results...")
+qualified = result.metrics[
+    (result.metrics['sharpe'] > 0.5) &
+    (result.metrics['max_drawdown_pct'] < 20) &
+    (result.metrics['time_in_position'] > 50)
+]
+
+print(f"Qualified strategies: {len(qualified)}/{len(result.metrics)}")
+
+# 6. Get Top Strategies
+top_strategies = qualified.nlargest(10, 'sharpe')
+print("\nTop 10 Strategies:")
+print(top_strategies[[
+    'initial_capital', 'tick_lower', 'tick_upper',
+    'rebalance_threshold', 'net_pnl', 'sharpe'
+]])
+
+# 7. Save Results
+output = {
+    'config': config,
+    'run_time': str(datetime.now()),
+    'total_strategies': len(result.metrics),
+    'qualified_strategies': len(qualified),
+    'top_strategy': top_strategies.iloc[0].to_dict(),
+}
+
+with open('backtest_results.json', 'w') as f:
+    json.dump(output, f, indent=2, default=str)
+
+# 8. Generate Report
+fig = amm.plot_efficient_frontier(result)
+fig.write_html('efficient_frontier.html')
+
+fig = amm.plot_metrics_heatmap(
+    result, 'tick_upper', 'tick_lower', 'sharpe'
+)
+fig.write_html('sharpe_heatmap.html')
+
+print(f"[{datetime.now()}] Complete!")
+```
+
+## See Also
+
+- [Performance Optimization](/tutorials/advanced/performance-optimization)

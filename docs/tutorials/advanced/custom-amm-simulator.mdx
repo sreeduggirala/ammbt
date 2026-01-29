@@ -1,0 +1,464 @@
+---
+title: "Custom AMM Simulator"
+description: "Build custom AMM implementations for ammBT"
+---
+
+# Custom AMM Simulator
+
+This tutorial shows how to create custom AMM simulators that integrate with ammBT's backtesting engine. You'll learn the interface requirements and implement a simple example.
+
+## The BaseAMMSimulator Interface
+
+All AMM simulators inherit from `BaseAMMSimulator`:
+
+```python
+from abc import ABC, abstractmethod
+import numpy as np
+import pandas as pd
+from typing import Dict, Any
+
+class BaseAMMSimulator(ABC):
+    """Abstract base class for AMM simulators."""
+
+    def __init__(self, pool_params: Dict[str, Any]):
+        """Initialize with pool parameters."""
+        self.pool_params = pool_params
+
+    @abstractmethod
+    def get_position_dtype(self) -> np.dtype:
+        """Return the structured dtype for position state."""
+        pass
+
+    @abstractmethod
+    def get_strategy_dtype(self) -> np.dtype:
+        """Return the structured dtype for strategy parameters."""
+        pass
+
+    @abstractmethod
+    def initialize_positions(
+        self,
+        n_strategies: int,
+        n_swaps: int,
+        strategy_params: np.ndarray,
+    ) -> np.ndarray:
+        """Initialize position state array."""
+        pass
+
+    @abstractmethod
+    def simulate(
+        self,
+        swaps: pd.DataFrame,
+        positions: np.ndarray,
+        strategy_params: np.ndarray,
+    ) -> np.ndarray:
+        """Run simulation and return updated positions."""
+        pass
+
+    @abstractmethod
+    def calculate_metrics(
+        self,
+        positions: np.ndarray,
+        swaps: pd.DataFrame,
+        strategy_params: np.ndarray,
+    ) -> pd.DataFrame:
+        """Calculate performance metrics from positions."""
+        pass
+```
+
+## Example: Custom Bonding Curve AMM
+
+Let's implement a simple bonding curve AMM where price is a function of supply:
+
+$$P(s) = k \cdot s^n$$
+
+Where:
+- $s$ = token supply
+- $k$ = base constant
+- $n$ = curve exponent
+
+```python
+import numpy as np
+import pandas as pd
+from typing import Dict, Any
+
+class BondingCurveSimulator:
+    """Custom bonding curve AMM simulator."""
+
+    def __init__(
+        self,
+        initial_supply: float = 1000.0,
+        base_constant: float = 0.001,
+        curve_exponent: float = 2.0,
+        fee_rate: float = 0.003,
+    ):
+        self.initial_supply = initial_supply
+        self.base_constant = base_constant
+        self.curve_exponent = curve_exponent
+        self.fee_rate = fee_rate
+
+    def get_position_dtype(self) -> np.dtype:
+        """Define position state structure."""
+        return np.dtype([
+            ('token_balance', 'f8'),        # LP's token holdings
+            ('reserve_balance', 'f8'),      # LP's reserve (e.g., USDC) holdings
+            ('uncollected_fees', 'f8'),     # Accumulated fees
+            ('cost_basis', 'f8'),           # Total invested
+            ('is_active', '?'),             # Position active
+            ('gas_spent', 'f8'),            # Gas costs
+            ('num_rebalances', 'i4'),       # Rebalance count
+        ])
+
+    def get_strategy_dtype(self) -> np.dtype:
+        """Define strategy parameter structure."""
+        return np.dtype([
+            ('initial_capital', 'f8'),
+            ('target_allocation', 'f8'),    # Target % in tokens
+            ('rebalance_threshold', 'f8'),  # Deviation to trigger rebalance
+        ])
+
+    def price_at_supply(self, supply: float) -> float:
+        """Calculate price at given supply level."""
+        return self.base_constant * (supply ** self.curve_exponent)
+
+    def initialize_positions(
+        self,
+        n_strategies: int,
+        n_swaps: int,
+        strategy_params: np.ndarray,
+    ) -> np.ndarray:
+        """Initialize all positions."""
+
+        dtype = self.get_position_dtype()
+        positions = np.zeros((n_swaps + 1, n_strategies), dtype=dtype)
+
+        # Initial price
+        initial_price = self.price_at_supply(self.initial_supply)
+
+        for i in range(n_strategies):
+            capital = strategy_params[i]['initial_capital']
+            target_alloc = strategy_params[i]['target_allocation']
+
+            # Allocate capital according to target
+            token_value = capital * target_alloc
+            reserve_value = capital * (1 - target_alloc)
+
+            positions[0, i] = (
+                token_value / initial_price,  # token_balance
+                reserve_value,                 # reserve_balance
+                0.0,                           # uncollected_fees
+                capital,                       # cost_basis
+                True,                          # is_active
+                0.0,                           # gas_spent
+                0,                             # num_rebalances
+            )
+
+        return positions
+
+    def simulate(
+        self,
+        swaps: pd.DataFrame,
+        positions: np.ndarray,
+        strategy_params: np.ndarray,
+    ) -> np.ndarray:
+        """Run the simulation."""
+
+        n_swaps = len(swaps)
+        n_strategies = positions.shape[1]
+
+        supply = self.initial_supply
+
+        for t in range(n_swaps):
+            swap = swaps.iloc[t]
+
+            # Update supply based on swap
+            amount = swap['amount0']  # Positive = buy, negative = sell
+            supply += amount
+
+            # Calculate new price
+            price = self.price_at_supply(supply)
+
+            # Calculate fee distribution
+            swap_volume = abs(swap.get('volume', abs(amount) * price))
+            total_fees = swap_volume * self.fee_rate
+
+            # Process each strategy
+            for s in range(n_strategies):
+                prev = positions[t, s]
+
+                if not prev['is_active']:
+                    positions[t + 1, s] = prev
+                    continue
+
+                # Current portfolio value
+                token_value = prev['token_balance'] * price
+                reserve_value = prev['reserve_balance']
+                total_value = token_value + reserve_value
+
+                # Fee share (simplified: proportional to token holdings)
+                fee_share = total_fees * (prev['token_balance'] / supply)
+
+                # Check rebalance
+                current_alloc = token_value / total_value if total_value > 0 else 0
+                target_alloc = strategy_params[s]['target_allocation']
+                threshold = strategy_params[s]['rebalance_threshold']
+
+                should_rebalance = abs(current_alloc - target_alloc) > threshold
+
+                if should_rebalance and threshold > 0:
+                    # Rebalance to target
+                    new_token_value = total_value * target_alloc
+                    new_reserve_value = total_value * (1 - target_alloc)
+
+                    positions[t + 1, s] = (
+                        new_token_value / price,
+                        new_reserve_value,
+                        prev['uncollected_fees'] + fee_share,
+                        prev['cost_basis'],
+                        True,
+                        prev['gas_spent'] + 50.0,  # Gas cost
+                        prev['num_rebalances'] + 1,
+                    )
+                else:
+                    # Just update with fees
+                    positions[t + 1, s] = (
+                        prev['token_balance'],
+                        prev['reserve_balance'],
+                        prev['uncollected_fees'] + fee_share,
+                        prev['cost_basis'],
+                        True,
+                        prev['gas_spent'],
+                        prev['num_rebalances'],
+                    )
+
+        return positions
+
+    def calculate_metrics(
+        self,
+        positions: np.ndarray,
+        swaps: pd.DataFrame,
+        strategy_params: np.ndarray,
+    ) -> pd.DataFrame:
+        """Calculate performance metrics."""
+
+        final_positions = positions[-1]
+        final_price = swaps['price'].iloc[-1]
+        n_strategies = len(final_positions)
+
+        metrics = []
+        for s in range(n_strategies):
+            pos = final_positions[s]
+
+            # Calculate final value
+            token_value = pos['token_balance'] * final_price
+            reserve_value = pos['reserve_balance']
+            fees = pos['uncollected_fees']
+            total_value = token_value + reserve_value + fees - pos['gas_spent']
+
+            net_pnl = total_value - pos['cost_basis']
+            return_pct = (net_pnl / pos['cost_basis']) * 100 if pos['cost_basis'] > 0 else 0
+
+            metrics.append({
+                'initial_capital': strategy_params[s]['initial_capital'],
+                'target_allocation': strategy_params[s]['target_allocation'],
+                'rebalance_threshold': strategy_params[s]['rebalance_threshold'],
+                'net_pnl': net_pnl,
+                'total_return_pct': return_pct,
+                'total_fees_earned': fees,
+                'gas_spent': pos['gas_spent'],
+                'num_rebalances': pos['num_rebalances'],
+            })
+
+        return pd.DataFrame(metrics)
+```
+
+## Integrating with LPBacktester
+
+To use your custom simulator:
+
+```python
+class LPBacktester:
+    """Modified to support custom simulators."""
+
+    def __init__(self, amm_type: str = 'v2', **kwargs):
+        if amm_type == 'bonding_curve':
+            self.simulator = BondingCurveSimulator(**kwargs)
+        # ... other AMM types
+
+    def run(self, swaps, strategies):
+        # Convert strategies to numpy array
+        strategy_params = self._prepare_strategies(strategies)
+
+        # Initialize positions
+        positions = self.simulator.initialize_positions(
+            n_strategies=len(strategy_params),
+            n_swaps=len(swaps),
+            strategy_params=strategy_params,
+        )
+
+        # Run simulation
+        positions = self.simulator.simulate(swaps, positions, strategy_params)
+
+        # Calculate metrics
+        metrics = self.simulator.calculate_metrics(positions, swaps, strategy_params)
+
+        return BacktestResult(positions, metrics, ...)
+```
+
+## Using Your Custom Simulator
+
+```python
+# Create simulator
+simulator = BondingCurveSimulator(
+    initial_supply=1000.0,
+    base_constant=0.001,
+    curve_exponent=2.0,
+    fee_rate=0.003,
+)
+
+# Generate swap data
+swaps = amm.generate_swaps(n_swaps=5000, seed=42)
+
+# Define strategies
+strategies = {
+    'initial_capital': [10000, 25000],
+    'target_allocation': [0.3, 0.5, 0.7],  # 30%, 50%, 70% in tokens
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+
+# Run manually (until integrated with LPBacktester)
+strategy_params = prepare_strategies(strategies, simulator.get_strategy_dtype())
+positions = simulator.initialize_positions(
+    n_strategies=len(strategy_params),
+    n_swaps=len(swaps),
+    strategy_params=strategy_params,
+)
+positions = simulator.simulate(swaps, positions, strategy_params)
+metrics = simulator.calculate_metrics(positions, swaps, strategy_params)
+
+print(metrics.sort_values('net_pnl', ascending=False))
+```
+
+## Adding Numba Acceleration
+
+For performance, compile critical functions:
+
+```python
+from numba import njit
+
+@njit(cache=True)
+def price_at_supply_jit(supply: float, k: float, n: float) -> float:
+    """Numba-compiled price calculation."""
+    return k * (supply ** n)
+
+@njit(cache=True)
+def simulate_step_jit(
+    positions: np.ndarray,
+    t: int,
+    supply: float,
+    price: float,
+    total_fees: float,
+    strategy_params: np.ndarray,
+) -> None:
+    """Numba-compiled simulation step."""
+
+    n_strategies = positions.shape[1]
+
+    for s in range(n_strategies):
+        prev = positions[t, s]
+
+        if not prev['is_active']:
+            positions[t + 1, s] = prev
+            continue
+
+        # ... vectorized calculations
+```
+
+## Testing Your Simulator
+
+```python
+import unittest
+
+class TestBondingCurveSimulator(unittest.TestCase):
+
+    def setUp(self):
+        self.simulator = BondingCurveSimulator(
+            initial_supply=1000.0,
+            base_constant=0.001,
+            curve_exponent=2.0,
+        )
+
+    def test_price_at_supply(self):
+        # At supply=1000, price should be 0.001 * 1000^2 = 1000
+        price = self.simulator.price_at_supply(1000.0)
+        self.assertAlmostEqual(price, 1000.0)
+
+    def test_initialization(self):
+        strategy_params = np.array([(10000, 0.5, 0.05)],
+                                   dtype=self.simulator.get_strategy_dtype())
+        positions = self.simulator.initialize_positions(1, 100, strategy_params)
+
+        self.assertEqual(positions.shape, (101, 1))
+        self.assertTrue(positions[0, 0]['is_active'])
+
+    def test_simulation_no_rebalance(self):
+        # Test that passive strategy accumulates fees
+        pass
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
+## Key Considerations
+
+### Position State Design
+
+<Check>
+Include all state needed to calculate portfolio value
+</Check>
+
+<Check>
+Track fees separately from balances
+</Check>
+
+<Check>
+Include metadata (gas spent, rebalance count)
+</Check>
+
+### Simulation Accuracy
+
+<Check>
+Match on-chain behavior as closely as possible
+</Check>
+
+<Check>
+Handle edge cases (zero liquidity, extreme prices)
+</Check>
+
+<Check>
+Validate against known transactions
+</Check>
+
+### Performance
+
+<Check>
+Use NumPy vectorization where possible
+</Check>
+
+<Check>
+Compile hot paths with Numba
+</Check>
+
+<Check>
+Minimize Python object creation in loops
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Performance Optimization" icon="gauge-high" href="/tutorials/advanced/performance-optimization">
+    Optimize your simulator for speed
+  </Card>
+  <Card title="Multi-Pool Analysis" icon="diagram-project" href="/tutorials/advanced/multi-pool-analysis">
+    Analyze across multiple pools
+  </Card>
+</CardGroup>

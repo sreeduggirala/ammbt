@@ -1,0 +1,54 @@
+---
+title: "plot_efficient_frontier"
+description: "Plot risk-return scatter for all strategies"
+---
+
+# plot_efficient_frontier
+
+Create a scatter plot showing risk vs return for all strategies.
+
+## Signature
+
+```python
+def plot_efficient_frontier(
+    result: BacktestResult,
+    risk_metric: str = 'max_drawdown_pct',
+    return_metric: str = 'total_return_pct',
+) -> go.Figure
+```
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `result` | BacktestResult | - | Backtest result object |
+| `risk_metric` | str | 'max_drawdown_pct' | Metric for x-axis (risk) |
+| `return_metric` | str | 'total_return_pct' | Metric for y-axis (return) |
+
+## Returns
+
+`plotly.graph_objects.Figure` - Scatter plot colored by Sharpe ratio.
+
+## Example
+
+```python
+import ammbt as amm
+
+result = bt.run(swaps, strategies)
+
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+
+# Custom metrics
+fig = amm.plot_efficient_frontier(
+    result,
+    risk_metric='num_rebalances',
+    return_metric='net_pnl'
+)
+fig.show()
+```
+
+## See Also
+
+- [Risk Metrics](/concepts/metrics/risk-metrics)
+- [plot_metrics_heatmap](/api-reference/plotting/plot-metrics-heatmap)

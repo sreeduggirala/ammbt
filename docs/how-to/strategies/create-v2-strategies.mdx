@@ -1,0 +1,52 @@
+---
+title: "Create V2 Strategies"
+description: "How to define Uniswap V2 LP strategies"
+---
+
+# Create V2 Strategies
+
+## Basic Strategy
+
+```python
+strategies = {
+    'initial_capital': [10000],
+    'rebalance_threshold': [0.05],  # 5%
+    'rebalance_frequency': [0],     # Disabled
+}
+```
+
+## Testing Multiple Capitals
+
+```python
+strategies = {
+    'initial_capital': [5000, 10000, 25000, 50000],
+    'rebalance_threshold': [0.05],
+    'rebalance_frequency': [0],
+}
+```
+
+## Comparing Rebalance Approaches
+
+```python
+strategies = {
+    'initial_capital': [25000],
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.10, 0.15],
+    'rebalance_frequency': [0, 100, 200, 500],
+}
+```
+
+## Run Backtest
+
+```python
+import ammbt as amm
+
+swaps = amm.generate_swaps(n_swaps=10000, seed=42)
+bt = amm.LPBacktester(amm_type='v2')
+result = bt.run(swaps, strategies)
+print(result.summary())
+```
+
+## See Also
+
+- [V2 Tutorial](/tutorials/beginner/your-first-v2-backtest)
+- [Rebalancing Strategies](/how-to/strategies/rebalancing-strategies)

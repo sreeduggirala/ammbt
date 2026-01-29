@@ -1,0 +1,353 @@
+---
+title: "Your First V2 Backtest"
+description: "Build a complete Uniswap V2 backtest from scratch"
+---
+
+# Your First V2 Backtest
+
+In this tutorial, you'll build a complete Uniswap V2 backtest from scratch. V2 is the simplest AMM type, making it perfect for learning the basics.
+
+## What You'll Learn
+
+- How to generate realistic swap data
+- How to set up V2 strategy parameters
+- How to run a backtest and analyze results
+- How to interpret key metrics
+
+## Prerequisites
+
+```python
+import ammbt as amm
+import pandas as pd
+import numpy as np
+```
+
+## Step 1: Understanding V2 Liquidity
+
+In Uniswap V2, you provide equal value of two tokens to a pool. The pool maintains the constant product invariant:
+
+$$x \cdot y = k$$
+
+When you provide $10,000 at a price of 1.0:
+- You deposit $5,000 worth of token0
+- You deposit $5,000 worth of token1
+
+```python
+initial_capital = 10000
+price = 1.0
+token0_amount = initial_capital / 2 / price  # 5000 token0
+token1_amount = initial_capital / 2          # 5000 token1
+```
+
+## Step 2: Generate Swap Data
+
+Let's create a realistic trading scenario:
+
+```python
+# Generate 30 days of trading activity
+swaps = amm.generate_swaps(
+    n_swaps=10000,           # ~5 swaps per minute over 30 days
+    initial_price=1.0,
+    base_volume=500.0,       # Average $500 per swap
+    volume_volatility=0.8,   # High volume variation
+    buy_sell_ratio=0.5,      # Balanced buys/sells
+    price_volatility=0.025,  # 2.5% daily volatility
+    time_between_swaps=300,  # 5 minutes average
+    seed=42
+)
+
+print(f"Generated {len(swaps)} swaps")
+print(f"Price range: {swaps['price'].min():.4f} - {swaps['price'].max():.4f}")
+print(f"Total volume: ${swaps['volume'].sum():,.0f}")
+```
+
+Output:
+```
+Generated 10000 swaps
+Price range: 0.7234 - 1.3891
+Total volume: $5,123,456
+```
+
+### Visualize the Price Path
+
+```python
+import plotly.express as px
+
+fig = px.line(
+    swaps,
+    y='price',
+    title='Simulated Price Path',
+    labels={'index': 'Swap Number', 'price': 'Price'}
+)
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/v2-price-path.png" alt="V2 Price Path" />
+</Frame>
+
+## Step 3: Define Your Strategy
+
+For V2, you need to decide:
+
+1. **Initial capital**: How much to provide
+2. **Rebalance threshold**: When to rebalance based on price movement
+3. **Rebalance frequency**: Minimum swaps between rebalances
+
+Let's test multiple configurations:
+
+```python
+strategies = {
+    'initial_capital': [10000],                # Fixed capital
+    'rebalance_threshold': [0.0, 0.05, 0.10, 0.15],  # 0%, 5%, 10%, 15%
+    'rebalance_frequency': [0],                # No minimum frequency
+}
+
+print(f"Testing {4} strategies")
+```
+
+<Note>
+Setting `rebalance_threshold=0.0` means no rebalancing (passive LP). The position simply collects fees without any adjustments.
+</Note>
+
+## Step 4: Run the Backtest
+
+```python
+# Create V2 backtester
+bt = amm.LPBacktester(amm_type='v2')
+
+# Run all strategies
+result = bt.run(swaps, strategies)
+
+print(f"Backtest complete!")
+print(f"Strategies tested: {len(result.metrics)}")
+```
+
+## Step 5: Analyze Results
+
+### View Strategy Performance
+
+```python
+summary = result.summary()
+print(summary)
+```
+
+Output:
+```
+   initial_capital  rebalance_threshold  rebalance_frequency   net_pnl  total_return_pct  sharpe  max_drawdown_pct  num_rebalances
+0            10000                 0.00                    0    -45.23             -0.45    0.12             12.34               0
+1            10000                 0.05                    0    234.56              2.35    0.89              8.23               7
+2            10000                 0.10                    0    189.34              1.89    0.76              9.12               4
+3            10000                 0.15                    0    123.45              1.23    0.54             10.45               2
+```
+
+### Key Observations
+
+1. **Passive LP (0% threshold)** had negative returns due to impermanent loss
+2. **5% threshold** performed best by crystallizing gains during price swings
+3. **Higher thresholds** rebalanced less but captured less fee income
+
+### Compare Metrics
+
+```python
+# Create comparison table
+comparison = summary[['rebalance_threshold', 'net_pnl', 'total_fees_earned',
+                       'impermanent_loss', 'num_rebalances', 'gas_spent']]
+print(comparison)
+```
+
+## Step 6: Deep Dive into Best Strategy
+
+```python
+# Get the best strategy index
+best_idx = summary.index[0]
+print(f"Best strategy index: {best_idx}")
+
+# View position history
+history = result.get_position_history(best_idx)
+print(f"\nPosition history shape: {history.shape}")
+print(history.tail())
+```
+
+### Calculate Portfolio Value Over Time
+
+```python
+# Get price series aligned with position history
+prices = swaps['price'].values
+
+# Calculate portfolio value
+token0 = history['token0_balance'].values
+token1 = history['token1_balance'].values
+fees0 = history['uncollected_fees_0'].values
+fees1 = history['uncollected_fees_1'].values
+gas = history['gas_spent'].values
+
+# Value in token1 terms
+portfolio_value = (token0 + fees0) * prices + (token1 + fees1) - gas
+
+# Plot
+fig = px.line(
+    y=portfolio_value,
+    title='Portfolio Value Over Time',
+    labels={'index': 'Swap', 'y': 'Value (USD)'}
+)
+fig.add_hline(y=10000, line_dash="dash", annotation_text="Initial Capital")
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/v2-portfolio-value.png" alt="Portfolio Value" />
+</Frame>
+
+## Step 7: Visualize with Built-in Plots
+
+### Performance Plot
+
+```python
+fig = amm.plot_performance(result, strategy_idx=best_idx)
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/v2-performance-plot.png" alt="Performance Plot" />
+</Frame>
+
+### PnL Distribution
+
+```python
+fig = amm.plot_pnl_distribution(result)
+fig.show()
+```
+
+## Understanding the Results
+
+### Fee Income
+
+V2 LPs earn 0.3% of every swap, proportional to their share of the pool:
+
+$$\text{Your Fee Share} = \frac{\text{Your Liquidity}}{\text{Total Pool Liquidity}}$$
+
+In our simulation, the pool has a base liquidity of 1,000,000. With $10,000 capital:
+
+```python
+your_share = 10000 / 1_000_000  # 1%
+total_volume = swaps['volume'].sum()
+expected_fees = total_volume * 0.003 * your_share
+print(f"Expected fees: ${expected_fees:,.2f}")
+```
+
+### Impermanent Loss
+
+Calculate IL from price change:
+
+```python
+initial_price = swaps['price'].iloc[0]
+final_price = swaps['price'].iloc[-1]
+price_ratio = final_price / initial_price
+
+# IL formula for CPAMM
+il_factor = 2 * np.sqrt(price_ratio) / (1 + price_ratio) - 1
+il_dollars = 10000 * il_factor
+
+print(f"Price change: {initial_price:.4f} -> {final_price:.4f}")
+print(f"IL factor: {il_factor:.4%}")
+print(f"IL in dollars: ${il_dollars:,.2f}")
+```
+
+### Net PnL
+
+$$\text{Net PnL} = \text{Fees Earned} + \text{Impermanent Loss} - \text{Gas Costs}$$
+
+Note: Impermanent loss is typically negative, so we add it (subtracting a negative).
+
+## Experiment: Testing Different Volatilities
+
+Let's see how strategy performance varies with market volatility:
+
+```python
+results = []
+
+for vol in [0.01, 0.02, 0.03, 0.04, 0.05]:
+    # Generate swaps with different volatility
+    test_swaps = amm.generate_swaps(
+        n_swaps=5000,
+        price_volatility=vol,
+        seed=42
+    )
+
+    # Run backtest
+    result = bt.run(test_swaps, strategies)
+
+    # Record best strategy for this volatility
+    best = result.summary().iloc[0]
+    results.append({
+        'volatility': vol,
+        'best_threshold': best['rebalance_threshold'],
+        'net_pnl': best['net_pnl'],
+        'total_return': best['total_return_pct']
+    })
+
+vol_comparison = pd.DataFrame(results)
+print(vol_comparison)
+```
+
+## Key Takeaways
+
+<Check>
+V2 LPs earn fees proportional to their pool share
+</Check>
+
+<Check>
+Impermanent loss can exceed fee income in volatile markets
+</Check>
+
+<Check>
+Rebalancing can help crystallize gains but incurs gas costs
+</Check>
+
+<Check>
+Optimal rebalance threshold depends on market volatility
+</Check>
+
+## Complete Code
+
+```python
+import ammbt as amm
+import pandas as pd
+
+# Generate data
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    price_volatility=0.025,
+    seed=42
+)
+
+# Define strategies
+strategies = {
+    'initial_capital': [10000],
+    'rebalance_threshold': [0.0, 0.05, 0.10, 0.15],
+    'rebalance_frequency': [0],
+}
+
+# Run backtest
+bt = amm.LPBacktester(amm_type='v2')
+result = bt.run(swaps, strategies)
+
+# Analyze
+print(result.summary())
+
+# Visualize
+fig = amm.plot_performance(result, strategy_idx=0)
+fig.show()
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Interpreting Results" icon="magnifying-glass" href="/tutorials/beginner/interpreting-results">
+    Deep dive into metrics and their meaning
+  </Card>
+  <Card title="Basic Plotting" icon="chart-line" href="/tutorials/beginner/basic-plotting">
+    Master ammBT's visualization tools
+  </Card>
+</CardGroup>

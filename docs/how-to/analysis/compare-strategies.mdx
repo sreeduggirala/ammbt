@@ -1,0 +1,66 @@
+---
+title: "Compare Strategies"
+description: "Compare LP strategies across multiple metrics"
+---
+
+# Compare Strategies
+
+## Side-by-Side Comparison
+
+```python
+# Get top 5 strategies
+top_5 = result.summary().head(5)
+
+# Compare key metrics
+comparison = top_5[[
+    'initial_capital', 'tick_lower', 'tick_upper',
+    'net_pnl', 'sharpe', 'max_drawdown_pct'
+]]
+print(comparison)
+```
+
+## Performance Attribution
+
+```python
+def attribution(result, idx):
+    m = result.metrics.loc[idx]
+
+    print(f"Strategy {idx}:")
+    print(f"  Fees:     ${m['total_fees_earned']:>10,.2f}")
+    print(f"  IL:       ${m['impermanent_loss']:>10,.2f}")
+    print(f"  Gas:      ${-m['gas_spent']:>10,.2f}")
+    print(f"  ─────────────────────────")
+    print(f"  Net PnL:  ${m['net_pnl']:>10,.2f}")
+
+for idx in result.summary().index[:3]:
+    attribution(result, idx)
+    print()
+```
+
+## Grouped Analysis
+
+```python
+# By capital level
+by_capital = result.metrics.groupby('initial_capital').agg({
+    'net_pnl': 'mean',
+    'sharpe': 'mean',
+    'total_return_pct': 'mean',
+})
+print("Performance by Capital:")
+print(by_capital)
+```
+
+## Statistical Comparison
+
+```python
+# Compare distributions
+narrow = result.metrics[result.metrics['tick_upper'] - result.metrics['tick_lower'] < 400]
+wide = result.metrics[result.metrics['tick_upper'] - result.metrics['tick_lower'] >= 400]
+
+print(f"Narrow ranges: mean={narrow['net_pnl'].mean():.2f}, std={narrow['net_pnl'].std():.2f}")
+print(f"Wide ranges: mean={wide['net_pnl'].mean():.2f}, std={wide['net_pnl'].std():.2f}")
+```
+
+## See Also
+
+- [Interpreting Results](/tutorials/beginner/interpreting-results)

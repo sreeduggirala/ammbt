@@ -1,0 +1,446 @@
+---
+title: "Uniswap V3 Backtesting"
+description: "Master concentrated liquidity strategies with tick-based ranges"
+---
+
+# Uniswap V3 Backtesting
+
+Uniswap V3 introduced **concentrated liquidity**, allowing LPs to provide liquidity within specific price ranges. This tutorial covers how to backtest V3 strategies effectively.
+
+## Understanding Concentrated Liquidity
+
+In V3, instead of spreading liquidity across all prices (0 to ∞), you choose a **range**:
+
+```
+Price Range: [P_lower, P_upper]
+
+         Outside Range          In Range           Outside Range
+         (no fees)              (earning fees)      (no fees)
+    ────────────────────────────────────────────────────────────────
+    0                P_lower    Current    P_upper                  ∞
+```
+
+### Benefits
+
+- **Higher capital efficiency**: 10-4000x more efficient than V2
+- **More fees**: Concentrated positions earn more per dollar
+- **Custom ranges**: Tailor to your market view
+
+### Risks
+
+- **Out of range**: Earn nothing when price leaves your range
+- **Higher IL**: Concentration amplifies impermanent loss
+- **Active management**: Need to rebalance when out of range
+
+## Understanding Ticks
+
+V3 uses **ticks** to define price points. Each tick represents a 0.01% price change:
+
+$$\text{Price} = 1.0001^{\text{tick}}$$
+
+```python
+from ammbt.utils import tick_to_price, price_to_tick
+
+# Convert between price and tick
+tick = 1000
+price = tick_to_price(tick)
+print(f"Tick {tick} = Price {price:.6f}")  # 1.105166
+
+# Reverse conversion
+tick_back = price_to_tick(1.105166)
+print(f"Price 1.105166 = Tick {tick_back}")  # 1000
+```
+
+### Tick Spacing
+
+Not all ticks are usable - it depends on the fee tier:
+
+| Fee Tier | Tick Spacing | Price Step |
+|----------|-------------|------------|
+| 0.05% (500) | 10 | ~0.1% |
+| 0.30% (3000) | 60 | ~0.6% |
+| 1.00% (10000) | 200 | ~2.0% |
+
+```python
+from ammbt.utils import get_tick_spacing, round_tick_to_spacing
+
+# Get spacing for fee tier
+spacing = get_tick_spacing(3000)  # 60
+
+# Round tick to valid value
+tick = round_tick_to_spacing(123, 60)  # 120
+```
+
+## Setting Up V3 Backtests
+
+### Creating the Backtester
+
+```python
+import ammbt as amm
+
+bt = amm.LPBacktester(
+    amm_type='v3',
+    initial_price=2000.0,      # Starting price
+    initial_liquidity=1e9,     # Pool liquidity
+    fee_tier=3000,             # 0.3% tier
+)
+```
+
+### Defining Strategies
+
+V3 strategies require tick ranges:
+
+```python
+strategies = {
+    'initial_capital': [10000, 25000],
+    'tick_lower': [-200, -400, -600],     # Below current price
+    'tick_upper': [200, 400, 600],        # Above current price
+    'rebalance_threshold': [0.0, 0.05],   # When to rebalance
+    'rebalance_frequency': [0, 200],      # Min swaps between
+}
+```
+
+### Using Range Generators
+
+Instead of manually calculating ticks, use helper functions:
+
+```python
+from ammbt.utils import generate_tick_ranges, create_v3_strategy_grid
+
+# Generate ranges by percentage width
+current_price = 2000.0
+tick_ranges = generate_tick_ranges(
+    current_price=current_price,
+    range_widths_pct=[0.05, 0.10, 0.20, 0.50],  # 5%, 10%, 20%, 50%
+    tick_spacing=60,
+)
+
+print("Generated tick ranges:")
+for lower, upper in tick_ranges:
+    lower_price = tick_to_price(lower)
+    upper_price = tick_to_price(upper)
+    print(f"  [{lower}, {upper}] = [{lower_price:.2f}, {upper_price:.2f}]")
+```
+
+### Complete Strategy Grid
+
+```python
+strategies = create_v3_strategy_grid(
+    initial_capitals=[10000, 25000, 50000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0, 0.05, 0.10],
+    rebalance_frequencies=[0, 200],
+)
+
+print(f"Total strategies: {len(strategies)}")
+```
+
+## Running the Backtest
+
+```python
+# Generate swap data
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    initial_price=2000.0,
+    price_volatility=0.03,
+    base_volume=50000,
+    seed=42
+)
+
+# Run backtest
+result = bt.run(swaps, strategies)
+
+# View results
+print(result.summary().head(10))
+```
+
+## Analyzing V3-Specific Metrics
+
+### Time in Range
+
+The percentage of time your position was earning fees:
+
+```python
+time_in_range = result.metrics['time_in_position']
+print(f"Average time in range: {time_in_range.mean():.1f}%")
+
+# Filter for strategies that were in range >80% of the time
+high_coverage = result.metrics[time_in_range > 80]
+print(f"Strategies with >80% coverage: {len(high_coverage)}")
+```
+
+### Capital Efficiency
+
+V3 positions are more capital efficient than V2:
+
+```python
+# Compare fees earned per dollar of capital
+fees = result.metrics['total_fees_earned']
+capital = result.metrics['initial_capital']
+efficiency = fees / capital
+
+print(f"Average fee efficiency: {efficiency.mean():.4f}")
+print(f"Best efficiency: {efficiency.max():.4f}")
+```
+
+### Out-of-Range Analysis
+
+```python
+# Find when positions went out of range
+best_idx = result.summary().index[0]
+history = result.get_position_history(best_idx)
+
+# is_in_range shows if currently earning
+in_range_pct = history['is_in_range'].mean() * 100
+print(f"In range: {in_range_pct:.1f}% of swaps")
+
+# Find transitions
+in_range_changes = history['is_in_range'].diff().fillna(0)
+went_out = (in_range_changes == -1).sum()
+came_back = (in_range_changes == 1).sum()
+print(f"Went out of range: {went_out} times")
+print(f"Came back in range: {came_back} times")
+```
+
+## Range Width Analysis
+
+Compare narrow vs. wide ranges:
+
+```python
+import pandas as pd
+
+# Calculate range width for each strategy
+result.metrics['range_width'] = (
+    result.metrics['tick_upper'] - result.metrics['tick_lower']
+)
+
+# Group by width
+width_analysis = result.metrics.groupby('range_width').agg({
+    'total_return_pct': 'mean',
+    'sharpe': 'mean',
+    'max_drawdown_pct': 'mean',
+    'time_in_position': 'mean',
+}).round(2)
+
+print("Performance by Range Width:")
+print(width_analysis)
+```
+
+### Visualize Range Width Effect
+
+```python
+import plotly.express as px
+
+fig = px.scatter(
+    result.metrics,
+    x='range_width',
+    y='total_return_pct',
+    color='sharpe',
+    size='initial_capital',
+    title='Return vs Range Width',
+    labels={
+        'range_width': 'Range Width (ticks)',
+        'total_return_pct': 'Total Return (%)',
+        'sharpe': 'Sharpe Ratio'
+    }
+)
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/v3-range-width.png" alt="Range Width Analysis" />
+</Frame>
+
+## Rebalancing Strategies
+
+### When to Rebalance
+
+V3 positions should be rebalanced when:
+
+1. **Price moves out of range** (most common)
+2. **Price moves significantly within range** (optional)
+3. **After a set number of swaps** (time-based)
+
+```python
+# Test different rebalance triggers
+rebalance_strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-300],
+    'tick_upper': [300],
+    # Different rebalance configurations
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.10, 0.15],
+    'rebalance_frequency': [0],
+}
+
+result = bt.run(swaps, rebalance_strategies)
+
+# Compare
+comparison = result.metrics[[
+    'rebalance_threshold', 'net_pnl', 'num_rebalances',
+    'gas_spent', 'time_in_position'
+]]
+print(comparison)
+```
+
+### Rebalancing Cost-Benefit
+
+```python
+# Calculate net benefit of rebalancing
+no_rebalance = result.metrics[result.metrics['rebalance_threshold'] == 0].iloc[0]
+with_rebalance = result.metrics[result.metrics['rebalance_threshold'] == 0.05].iloc[0]
+
+extra_fees = with_rebalance['total_fees_earned'] - no_rebalance['total_fees_earned']
+gas_cost = with_rebalance['gas_spent'] - no_rebalance['gas_spent']
+reduced_il = no_rebalance['impermanent_loss'] - with_rebalance['impermanent_loss']
+
+print(f"Rebalancing Impact:")
+print(f"  Extra fees: ${extra_fees:,.2f}")
+print(f"  Gas costs:  ${gas_cost:,.2f}")
+print(f"  Reduced IL: ${reduced_il:,.2f}")
+print(f"  Net benefit: ${extra_fees - gas_cost + reduced_il:,.2f}")
+```
+
+## Fee Tier Selection
+
+Choose the right fee tier for your pair:
+
+```python
+# Compare fee tiers
+for fee_tier in [500, 3000, 10000]:
+    bt = amm.LPBacktester(
+        amm_type='v3',
+        initial_price=2000.0,
+        fee_tier=fee_tier,
+    )
+
+    result = bt.run(swaps, {
+        'initial_capital': [25000],
+        'tick_lower': [-300],
+        'tick_upper': [300],
+    })
+
+    metrics = result.metrics.iloc[0]
+    print(f"Fee Tier {fee_tier/10000:.2%}:")
+    print(f"  Fees earned: ${metrics['total_fees_earned']:,.2f}")
+    print(f"  Net PnL: ${metrics['net_pnl']:,.2f}")
+    print()
+```
+
+### Fee Tier Guidelines
+
+| Pair Type | Recommended Tier |
+|-----------|------------------|
+| Stable-stable (USDC-USDT) | 0.01% or 0.05% |
+| Stable-blue chip (ETH-USDC) | 0.05% or 0.30% |
+| Blue chip-blue chip (ETH-BTC) | 0.30% |
+| Volatile pairs | 0.30% or 1.00% |
+
+## Advanced: Asymmetric Ranges
+
+Create ranges that aren't centered on current price:
+
+```python
+from ammbt.utils import generate_tick_ranges_asymmetric
+
+# Bullish view: more room on upside
+bullish_ranges = generate_tick_ranges_asymmetric(
+    current_price=2000.0,
+    lower_ranges_pct=[0.05],       # 5% below
+    upper_ranges_pct=[0.20],       # 20% above
+    tick_spacing=60,
+)
+
+# Bearish view: more room on downside
+bearish_ranges = generate_tick_ranges_asymmetric(
+    current_price=2000.0,
+    lower_ranges_pct=[0.20],       # 20% below
+    upper_ranges_pct=[0.05],       # 5% above
+    tick_spacing=60,
+)
+
+# Compare
+print(f"Bullish range: {bullish_ranges[0]}")
+print(f"Bearish range: {bearish_ranges[0]}")
+```
+
+## Complete V3 Workflow
+
+```python
+import ammbt as amm
+from ammbt.utils import generate_tick_ranges, create_v3_strategy_grid
+
+# 1. Generate data
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    initial_price=2000.0,
+    price_volatility=0.03,
+    seed=42
+)
+
+# 2. Generate tick ranges
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.05, 0.10, 0.20, 0.50],
+)
+
+# 3. Create strategy grid
+strategies = create_v3_strategy_grid(
+    initial_capitals=[10000, 25000, 50000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0, 0.05, 0.10],
+    rebalance_frequencies=[0, 200],
+)
+
+# 4. Run backtest
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000, initial_price=2000.0)
+result = bt.run(swaps, strategies)
+
+# 5. Analyze
+print("Top 10 Strategies:")
+print(result.summary().head(10))
+
+# 6. Visualize
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='tick_upper',
+    y_param='tick_lower',
+    metric='sharpe'
+)
+fig.show()
+```
+
+## Key Takeaways
+
+<Check>
+V3 concentrates liquidity in price ranges for higher efficiency
+</Check>
+
+<Check>
+Narrower ranges earn more fees but have higher IL risk
+</Check>
+
+<Check>
+Rebalancing helps recover from out-of-range situations
+</Check>
+
+<Check>
+Fee tier should match pair volatility
+</Check>
+
+<Check>
+Use `generate_tick_ranges()` for easy range creation
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Meteora DLMM" icon="grid-2" href="/tutorials/intermediate/meteora-dlmm-backtesting">
+    Learn bin-based concentrated liquidity
+  </Card>
+  <Card title="Strategy Optimization" icon="sliders" href="/tutorials/intermediate/strategy-optimization">
+    Find optimal parameters systematically
+  </Card>
+</CardGroup>

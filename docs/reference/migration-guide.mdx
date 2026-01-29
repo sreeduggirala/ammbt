@@ -1,0 +1,67 @@
+---
+title: "Migration Guide"
+description: "Upgrading between ammBT versions"
+---
+
+# Migration Guide
+
+Guide for upgrading between ammBT versions.
+
+## From 0.0.x to 0.1.0
+
+### Breaking Changes
+
+1. **Module structure**: Imports have changed
+
+```python
+# Old
+from ammbt.backtester import Backtester
+
+# New
+from ammbt import LPBacktester
+# or
+import ammbt as amm
+bt = amm.LPBacktester()
+```
+
+2. **Strategy parameters**: Dict keys renamed
+
+```python
+# Old
+strategies = {'capital': [10000], 'lower_tick': [-200]}
+
+# New
+strategies = {'initial_capital': [10000], 'tick_lower': [-200]}
+```
+
+3. **Result access**: Changed from methods to attributes
+
+```python
+# Old
+metrics = result.get_metrics()
+
+# New
+metrics = result.metrics
+```
+
+### New Features
+
+- DLMM support with `amm_type='dlmm'`
+- Strategy grid generators
+- Enhanced plotting functions
+
+### Deprecations
+
+None in this release.
+
+## Future Migrations
+
+Migration guides will be added as new major versions are released.
+
+## Getting Help
+
+If you encounter issues upgrading:
+
+1. Check [Troubleshooting](/reference/troubleshooting)
+2. Search [GitHub Issues](https://github.com/your-org/ammbt/issues)
+3. Open a new issue with version details

@@ -1,0 +1,51 @@
+---
+title: "DLMM Dynamic Fees"
+description: "Understanding volatility-based dynamic fees"
+---
+
+# DLMM Dynamic Fees
+
+Explore how DLMM's dynamic fee mechanism affects performance.
+
+```python
+import ammbt as amm
+from ammbt.utils import calculate_dlmm_base_fee, calculate_dlmm_total_fee
+
+# Calculate base fee
+base_fee = calculate_dlmm_base_fee(bin_step=25, base_factor=10000)
+print(f"Base fee: {base_fee:.4%}")
+
+# Compare different volatility scenarios
+for vol in [0.01, 0.03, 0.05]:
+    swaps = amm.generate_swaps(
+        n_swaps=10000,
+        price_volatility=vol,
+        seed=42
+    )
+
+    bt = amm.LPBacktester(
+        amm_type='dlmm',
+        bin_step=25,
+        variable_fee_control=40000,
+    )
+
+    result = bt.run(swaps, {
+        'initial_capital': [25000],
+        'bin_lower': [-40],
+        'bin_upper': [40],
+        'liquidity_shape': [1],
+    })
+
+    m = result.metrics.iloc[0]
+    print(f"Volatility {vol:.0%}: Fees=${m['total_fees_earned']:.2f}, PnL=${m['net_pnl']:.2f}")
+```
+
+## Key Points
+
+- Base fee is fixed per bin_step
+- Variable fee increases with volatility
+- Higher fees during volatility protect LPs
+
+## See Also
+
+- [DLMM Concepts](/concepts/amm-fundamentals/dlmm-meteora)

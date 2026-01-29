@@ -1,0 +1,392 @@
+---
+title: "Numba Compilation"
+description: "How ammBT uses JIT compilation for maximum performance"
+---
+
+# Numba Compilation
+
+ammBT uses **Numba** to compile performance-critical functions to native machine code. This provides C-like performance while maintaining Python's ease of use.
+
+## What is Numba?
+
+Numba is a **Just-In-Time (JIT) compiler** that translates Python functions to optimized machine code at runtime using LLVM.
+
+```python
+from numba import njit
+
+@njit
+def add(a, b):
+    return a + b
+
+# First call: Numba compiles to machine code
+# Subsequent calls: Run compiled code directly
+```
+
+## How ammBT Uses Numba
+
+### Math Functions
+
+Core mathematical operations are Numba-compiled:
+
+```python
+@njit(cache=True)
+def tick_to_price(tick: int) -> float:
+    """Convert tick to price."""
+    return 1.0001 ** tick
+
+@njit(cache=True)
+def price_to_tick(price: float) -> int:
+    """Convert price to tick."""
+    return int(math.log(price) / math.log(1.0001))
+
+@njit(cache=True)
+def get_amount_out(
+    amount_in: float,
+    reserve_in: float,
+    reserve_out: float,
+    fee: float = 0.003,
+) -> float:
+    """Calculate output amount for V2 swap."""
+    amount_in_with_fee = amount_in * (1 - fee)
+    numerator = amount_in_with_fee * reserve_out
+    denominator = reserve_in + amount_in_with_fee
+    return numerator / denominator
+```
+
+### Liquidity Math
+
+Complex liquidity calculations benefit most:
+
+```python
+@njit(cache=True)
+def get_liquidity_for_amounts(
+    sqrt_price_x96: float,
+    sqrt_price_a_x96: float,
+    sqrt_price_b_x96: float,
+    amount0: float,
+    amount1: float,
+) -> float:
+    """Calculate V3 liquidity from token amounts."""
+    if sqrt_price_a_x96 > sqrt_price_b_x96:
+        sqrt_price_a_x96, sqrt_price_b_x96 = sqrt_price_b_x96, sqrt_price_a_x96
+
+    if sqrt_price_x96 <= sqrt_price_a_x96:
+        liquidity = amount0 * (sqrt_price_a_x96 * sqrt_price_b_x96) / \
+                   (sqrt_price_b_x96 - sqrt_price_a_x96)
+    elif sqrt_price_x96 < sqrt_price_b_x96:
+        liquidity0 = amount0 * (sqrt_price_x96 * sqrt_price_b_x96) / \
+                    (sqrt_price_b_x96 - sqrt_price_x96)
+        liquidity1 = amount1 / (sqrt_price_x96 - sqrt_price_a_x96)
+        liquidity = min(liquidity0, liquidity1)
+    else:
+        liquidity = amount1 / (sqrt_price_b_x96 - sqrt_price_a_x96)
+
+    return liquidity
+```
+
+### Fee Calculations
+
+Fee tracking involves many small operations:
+
+```python
+@njit(cache=True)
+def calculate_fee_growth_inside(
+    tick_lower: int,
+    tick_upper: int,
+    current_tick: int,
+    fee_growth_global: float,
+    fee_growth_below_lower: float,
+    fee_growth_above_upper: float,
+) -> float:
+    """Calculate fee growth inside a V3 position."""
+    if current_tick < tick_lower:
+        fee_growth_inside = fee_growth_below_lower - fee_growth_above_upper
+    elif current_tick >= tick_upper:
+        fee_growth_inside = fee_growth_above_upper - fee_growth_below_lower
+    else:
+        fee_growth_inside = (
+            fee_growth_global -
+            fee_growth_below_lower -
+            fee_growth_above_upper
+        )
+    return fee_growth_inside
+```
+
+## Configuration
+
+### Caching
+
+Enable caching to avoid recompilation:
+
+```python
+from ammbt.utils import Config
+
+# Enable caching (default: True)
+Config.set("numba.cache", True)
+
+# Compiled functions stored in __pycache__
+# Subsequent runs skip compilation
+```
+
+### Fast Math
+
+Allow floating-point optimizations:
+
+```python
+# Enable fast math (default: True)
+Config.set("numba.fastmath", True)
+
+# Allows: associative reordering, reciprocal instead of divide
+# Trade-off: slightly less precise, faster execution
+```
+
+### Parallel Execution
+
+Enable parallel loops:
+
+```python
+# Enable parallel (default: False)
+Config.set("numba.parallel", True)
+
+# Use with prange for parallel loops
+from numba import prange
+
+@njit(parallel=True)
+def parallel_sum(arr):
+    total = 0.0
+    for i in prange(len(arr)):  # Runs in parallel
+        total += arr[i]
+    return total
+```
+
+## Performance Impact
+
+### Benchmark: tick_to_price
+
+```python
+import time
+import math
+
+# Pure Python
+def tick_to_price_python(tick):
+    return 1.0001 ** tick
+
+# Numba compiled
+@njit(cache=True)
+def tick_to_price_numba(tick):
+    return 1.0001 ** tick
+
+# Benchmark
+ticks = list(range(-10000, 10000))
+
+# Python
+start = time.time()
+for tick in ticks:
+    tick_to_price_python(tick)
+python_time = time.time() - start
+
+# Numba (after warmup)
+tick_to_price_numba(0)  # Warmup
+start = time.time()
+for tick in ticks:
+    tick_to_price_numba(tick)
+numba_time = time.time() - start
+
+print(f"Python: {python_time*1000:.2f}ms")
+print(f"Numba: {numba_time*1000:.2f}ms")
+print(f"Speedup: {python_time/numba_time:.1f}x")
+```
+
+Typical results:
+- Python: 15ms
+- Numba: 0.5ms
+- **Speedup: 30x**
+
+### Benchmark: get_liquidity_for_amounts
+
+For complex functions, speedup is even greater:
+
+```python
+# Python: 150ms for 100K calls
+# Numba: 2ms for 100K calls
+# Speedup: 75x
+```
+
+## JIT Warmup
+
+First call to a Numba function includes compilation time:
+
+```python
+import time
+
+@njit
+def example_func(x):
+    return x * 2
+
+# First call: includes compilation (~100ms)
+start = time.time()
+example_func(1)
+print(f"First call: {(time.time()-start)*1000:.1f}ms")
+
+# Second call: compiled code only (~0.001ms)
+start = time.time()
+example_func(1)
+print(f"Second call: {(time.time()-start)*1000:.4f}ms")
+```
+
+### Warming Up ammBT
+
+```python
+import ammbt as amm
+
+# Warmup run before timing
+_ = amm.generate_swaps(n_swaps=100, seed=0)
+bt = amm.LPBacktester(amm_type='v3')
+_ = bt.run(amm.generate_swaps(100), {'initial_capital': [1000]})
+
+# Now timing is accurate
+import time
+start = time.time()
+# ... actual backtest
+elapsed = time.time() - start
+```
+
+## Numba Decorators
+
+### @njit
+
+Standard JIT compilation (nopython mode):
+
+```python
+@njit
+def fast_func(x):
+    return x ** 2
+```
+
+### @njit(cache=True)
+
+Enable caching:
+
+```python
+@njit(cache=True)
+def cached_func(x):
+    return x ** 2
+```
+
+### @njit(parallel=True)
+
+Enable automatic parallelization:
+
+```python
+@njit(parallel=True)
+def parallel_func(arr):
+    result = np.empty_like(arr)
+    for i in prange(len(arr)):
+        result[i] = arr[i] ** 2
+    return result
+```
+
+### @njit(fastmath=True)
+
+Enable fast math:
+
+```python
+@njit(fastmath=True)
+def fast_math_func(x):
+    return x / 2.0  # May use multiply by 0.5
+```
+
+## Best Practices
+
+### Do's
+
+<Check>
+Use `cache=True` to avoid recompilation
+</Check>
+
+<Check>
+Keep functions small and focused
+</Check>
+
+<Check>
+Use NumPy arrays for inputs/outputs
+</Check>
+
+<Check>
+Warm up before timing
+</Check>
+
+### Don'ts
+
+<Warning>
+Don't use Python objects (lists, dicts) inside njit functions
+</Warning>
+
+<Warning>
+Don't call non-compiled Python functions from njit
+</Warning>
+
+<Warning>
+Don't use string operations
+</Warning>
+
+<Warning>
+Don't use try/except blocks
+</Warning>
+
+## Troubleshooting
+
+### Compilation Errors
+
+```python
+# Error: can't compile Python list operations
+@njit
+def bad_func():
+    return [1, 2, 3]  # Lists not supported
+
+# Fix: use NumPy array
+@njit
+def good_func():
+    return np.array([1, 2, 3])
+```
+
+### Type Inference
+
+```python
+# Error: can't infer type
+@njit
+def ambiguous_func(x):
+    if x > 0:
+        return 1
+    return 1.0  # Different return types!
+
+# Fix: consistent types
+@njit
+def fixed_func(x):
+    if x > 0:
+        return 1.0
+    return 1.0
+```
+
+### Clearing Cache
+
+```bash
+# Delete cached compiled functions
+rm -rf __pycache__
+rm -rf ~/.cache/numba
+
+# Or in Python
+from numba import config
+config.CACHE_DIR = ''  # Disable caching
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Position State Tracking" icon="database" href="/concepts/architecture/position-state-tracking">
+    How positions are managed
+  </Card>
+  <Card title="Strategy Parameter Grids" icon="grid" href="/concepts/architecture/strategy-parameter-grids">
+    How strategies are expanded
+  </Card>
+</CardGroup>

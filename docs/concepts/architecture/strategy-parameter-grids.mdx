@@ -1,0 +1,342 @@
+---
+title: "Strategy Parameter Grids"
+description: "How ammBT expands and manages strategy parameters"
+---
+
+# Strategy Parameter Grids
+
+ammBT makes it easy to test many strategy variations at once through **parameter grids**. This page explains how strategies are specified, expanded, and used.
+
+## Specifying Strategies
+
+### Dictionary of Lists
+
+The simplest way to specify strategies:
+
+```python
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': [-200, -400],
+    'tick_upper': [200, 400],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+```
+
+ammBT creates the **Cartesian product** of all parameters:
+- 3 × 2 × 2 × 3 = **36 strategies**
+
+### DataFrame
+
+For explicit control over combinations:
+
+```python
+import pandas as pd
+
+strategies = pd.DataFrame({
+    'initial_capital': [10000, 10000, 25000, 25000],
+    'tick_lower': [-200, -400, -200, -400],
+    'tick_upper': [200, 400, 200, 400],
+    'rebalance_threshold': [0.05, 0.05, 0.10, 0.10],
+})
+```
+
+Tests exactly **4 strategies** (the rows), not Cartesian product.
+
+## Grid Expansion
+
+### Internal Processing
+
+```python
+def expand_strategy_grid(strategies):
+    """Expand strategy dict to array."""
+
+    if isinstance(strategies, pd.DataFrame):
+        # Already explicit, convert directly
+        return strategies.to_records(index=False)
+
+    if isinstance(strategies, dict):
+        # Cartesian product
+        from itertools import product
+
+        keys = list(strategies.keys())
+        values = list(strategies.values())
+
+        combinations = list(product(*values))
+
+        return np.array(combinations, dtype=strategy_dtype)
+```
+
+### Example Expansion
+
+```python
+# Input
+strategies = {
+    'initial_capital': [10000, 25000],
+    'tick_lower': [-200, -400],
+}
+
+# Expanded (Cartesian product)
+expanded = [
+    (10000, -200),
+    (10000, -400),
+    (25000, -200),
+    (25000, -400),
+]
+```
+
+## Strategy Dtype
+
+Strategies become a structured NumPy array:
+
+### V2 Strategy Dtype
+
+```python
+V2_STRATEGY_DTYPE = np.dtype([
+    ('initial_capital', 'f8'),
+    ('rebalance_threshold', 'f8'),
+    ('rebalance_frequency', 'i4'),
+])
+```
+
+### V3 Strategy Dtype
+
+```python
+V3_STRATEGY_DTYPE = np.dtype([
+    ('initial_capital', 'f8'),
+    ('tick_lower', 'i4'),
+    ('tick_upper', 'i4'),
+    ('rebalance_threshold', 'f8'),
+    ('rebalance_frequency', 'i4'),
+])
+```
+
+### DLMM Strategy Dtype
+
+```python
+DLMM_STRATEGY_DTYPE = np.dtype([
+    ('initial_capital', 'f8'),
+    ('bin_lower', 'i4'),
+    ('bin_upper', 'i4'),
+    ('liquidity_shape', 'i4'),
+    ('rebalance_threshold', 'f8'),
+    ('rebalance_frequency', 'i4'),
+])
+```
+
+## Using Strategy Generators
+
+### V3 Tick Range Generation
+
+```python
+from ammbt.utils import generate_tick_ranges, create_v3_strategy_grid
+
+# Generate tick ranges by percentage width
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.05, 0.10, 0.20],  # 5%, 10%, 20% ranges
+    tick_spacing=60,  # 0.3% fee tier
+)
+
+# Output: [(-243, 243), (-487, 487), (-1018, 1018)]
+```
+
+### V3 Strategy Grid
+
+```python
+strategies = create_v3_strategy_grid(
+    initial_capitals=[10000, 25000, 50000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0, 0.05, 0.10],
+    rebalance_frequencies=[0, 200],
+)
+
+# Returns DataFrame with all combinations
+print(f"Total strategies: {len(strategies)}")  # 3 × 3 × 3 × 2 = 54
+```
+
+### DLMM Bin Range Generation
+
+```python
+from ammbt.utils import generate_bin_ranges, create_dlmm_strategy_grid
+
+bin_ranges = generate_bin_ranges(
+    current_price=1.0,
+    bin_step=25,
+    range_widths_pct=[0.05, 0.10, 0.20],
+)
+
+strategies = create_dlmm_strategy_grid(
+    initial_capitals=[10000, 25000],
+    bin_ranges=bin_ranges,
+    liquidity_shapes=[0, 1],  # Spot, Curve
+    rebalance_thresholds=[0.0, 0.05],
+    rebalance_frequencies=[0],
+)
+```
+
+## Grid Size Considerations
+
+### Calculating Total Strategies
+
+```python
+def count_strategies(strategies_dict):
+    """Count total strategy combinations."""
+    from functools import reduce
+    from operator import mul
+
+    counts = [len(v) for v in strategies_dict.values()]
+    return reduce(mul, counts, 1)
+
+strategies = {
+    'initial_capital': [10000, 25000, 50000],        # 3
+    'tick_lower': list(range(-500, 0, 50)),          # 10
+    'tick_upper': list(range(50, 550, 50)),          # 10
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.10],  # 4
+    'rebalance_frequency': [0, 100, 200, 500],       # 4
+}
+
+total = count_strategies(strategies)
+print(f"Total strategies: {total}")  # 4,800
+```
+
+### Memory Estimation
+
+```python
+def estimate_memory_gb(n_strategies, n_swaps, position_size_bytes=80):
+    """Estimate memory usage."""
+    bytes_needed = (n_swaps + 1) * n_strategies * position_size_bytes
+    return bytes_needed / (1024**3)
+
+memory = estimate_memory_gb(4800, 100000)
+print(f"Memory needed: {memory:.1f} GB")  # ~36 GB
+```
+
+### Filtering Strategies
+
+Reduce grid size by filtering invalid combinations:
+
+```python
+# Create DataFrame for easier filtering
+strategies = pd.DataFrame(
+    list(product(
+        [10000, 25000, 50000],
+        range(-500, 0, 50),
+        range(50, 550, 50),
+        [0.0, 0.05, 0.10],
+    )),
+    columns=['initial_capital', 'tick_lower', 'tick_upper', 'rebalance_threshold']
+)
+
+# Filter: tick_lower must be less than tick_upper by at least 100
+strategies = strategies[
+    strategies['tick_upper'] - strategies['tick_lower'] >= 100
+]
+
+# Filter: remove very narrow ranges for high capital
+strategies = strategies[~(
+    (strategies['initial_capital'] >= 50000) &
+    (strategies['tick_upper'] - strategies['tick_lower'] < 200)
+)]
+
+print(f"Filtered to {len(strategies)} strategies")
+```
+
+## Strategy Indexing
+
+After running, results are indexed by strategy:
+
+```python
+result = bt.run(swaps, strategies)
+
+# Metrics DataFrame has one row per strategy
+print(result.metrics.shape)  # (n_strategies, n_metrics)
+
+# Access by index
+best_strategy = result.metrics.loc[result.metrics['net_pnl'].idxmax()]
+
+# Get position history by index
+best_idx = result.metrics['net_pnl'].idxmax()
+history = result.get_position_history(best_idx)
+```
+
+## Best Practices
+
+### Start Small
+
+```python
+# Development: small grid
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-200],
+    'tick_upper': [200],
+    'rebalance_threshold': [0.05],
+}
+
+# Production: full grid
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': list(range(-500, -50, 50)),
+    'tick_upper': list(range(100, 550, 50)),
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.10],
+}
+```
+
+### Use DataFrame for Complex Logic
+
+```python
+# When you need conditional parameters
+import pandas as pd
+from itertools import product
+
+# Generate base grid
+base = list(product(
+    [10000, 25000, 50000],
+    [0.05, 0.10, 0.20],  # range width %
+))
+
+strategies = []
+for capital, range_pct in base:
+    # Wider ranges for higher capital
+    if capital >= 50000:
+        thresholds = [0.0, 0.10]  # Less aggressive rebalancing
+    else:
+        thresholds = [0.0, 0.05, 0.10]
+
+    for thresh in thresholds:
+        strategies.append({
+            'initial_capital': capital,
+            'range_width_pct': range_pct,
+            'rebalance_threshold': thresh,
+        })
+
+strategies = pd.DataFrame(strategies)
+```
+
+### Batch Large Grids
+
+```python
+def batch_backtest(swaps, strategies, batch_size=1000):
+    """Run large strategy grids in batches."""
+    all_metrics = []
+
+    for i in range(0, len(strategies), batch_size):
+        batch = strategies.iloc[i:i+batch_size]
+        result = bt.run(swaps, batch)
+        all_metrics.append(result.metrics)
+
+        # Progress
+        print(f"Completed {min(i+batch_size, len(strategies))}/{len(strategies)}")
+
+    return pd.concat(all_metrics, ignore_index=True)
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="PnL Calculations" icon="calculator" href="/concepts/metrics/pnl-calculations">
+    How profits are calculated
+  </Card>
+  <Card title="Strategy Optimization" icon="sliders" href="/tutorials/intermediate/strategy-optimization">
+    Finding optimal parameters
+  </Card>
+</CardGroup>

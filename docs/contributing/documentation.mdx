@@ -1,0 +1,78 @@
+---
+title: "Documentation"
+description: "Documentation guidelines"
+---
+
+# Documentation Guidelines
+
+## Structure
+
+```
+docs/
+├── mint.json               # Mintlify config
+├── getting-started/        # Onboarding
+├── tutorials/              # Step-by-step guides
+├── concepts/               # Explanations
+├── how-to/                 # Task-focused guides
+├── api-reference/          # API docs
+├── examples/               # Complete examples
+├── reference/              # FAQ, glossary, etc.
+└── contributing/           # Contribution guides
+```
+
+## Writing Style
+
+- Use present tense
+- Be concise
+- Include code examples
+- Link to related pages
+
+## Page Template
+
+```mdx
+---
+title: "Page Title"
+description: "Brief description for SEO"
+---
+
+# Page Title
+
+Introduction paragraph.
+
+## Section
+
+Content with code:
+
+```python
+example_code()
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Related" href="/path">
+    Description
+  </Card>
+</CardGroup>
+```
+
+## Code Examples
+
+- Must be runnable
+- Include imports
+- Use seed for reproducibility
+- Show expected output
+
+## Building Docs
+
+```bash
+cd docs
+mintlify dev
+```
+
+## Submitting Doc Changes
+
+1. Fork repository
+2. Edit relevant `.mdx` files
+3. Test locally with `mintlify dev`
+4. Submit pull request

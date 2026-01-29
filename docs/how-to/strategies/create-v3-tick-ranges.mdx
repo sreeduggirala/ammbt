@@ -1,0 +1,59 @@
+---
+title: "Create V3 Tick Ranges"
+description: "How to define Uniswap V3 tick ranges"
+---
+
+# Create V3 Tick Ranges
+
+## Using Percentage Widths
+
+```python
+from ammbt.utils import generate_tick_ranges
+
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.05, 0.10, 0.20],
+)
+
+# Output: [(-243, 243), (-487, 487), (-1018, 1018)]
+```
+
+## Manual Tick Specification
+
+```python
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-200, -400, -600],
+    'tick_upper': [200, 400, 600],
+}
+```
+
+## Asymmetric Ranges
+
+```python
+from ammbt.utils import generate_tick_ranges_asymmetric
+
+# Bullish: more room above
+ranges = generate_tick_ranges_asymmetric(
+    current_price=2000.0,
+    lower_ranges_pct=[0.05],
+    upper_ranges_pct=[0.20],
+)
+```
+
+## Complete Strategy Grid
+
+```python
+from ammbt.utils import create_v3_strategy_grid
+
+strategies = create_v3_strategy_grid(
+    initial_capitals=[10000, 25000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0, 0.05],
+)
+```
+
+## See Also
+
+- [V3 Tutorial](/tutorials/intermediate/uniswap-v3-backtesting)
+- [Tick Conversions](/api-reference/utils/tick-conversions)

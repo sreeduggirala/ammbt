@@ -1,0 +1,177 @@
+---
+title: "LPBacktester"
+description: "Main backtesting engine for AMM liquidity provider positions"
+---
+
+# LPBacktester
+
+The main class for running LP strategy backtests.
+
+## Constructor
+
+```python
+class LPBacktester:
+    def __init__(
+        self,
+        amm_type: str = 'v2',
+        **amm_params
+    )
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `amm_type` | str | 'v2' | AMM type: 'v2', 'v3', or 'dlmm' |
+| `**amm_params` | dict | - | AMM-specific parameters |
+
+### AMM-Specific Parameters
+
+<Tabs>
+  <Tab title="V2">
+    ```python
+    bt = LPBacktester(
+        amm_type='v2',
+        initial_reserve0=1_000_000.0,
+        initial_reserve1=1_000_000.0,
+        fee_rate=0.003,
+    )
+    ```
+
+    | Parameter | Type | Default | Description |
+    |-----------|------|---------|-------------|
+    | `initial_reserve0` | float | 1,000,000 | Initial token0 reserve |
+    | `initial_reserve1` | float | 1,000,000 | Initial token1 reserve |
+    | `fee_rate` | float | 0.003 | Swap fee (0.3%) |
+  </Tab>
+
+  <Tab title="V3">
+    ```python
+    bt = LPBacktester(
+        amm_type='v3',
+        initial_price=2000.0,
+        initial_liquidity=1_000_000_000,
+        fee_tier=3000,
+    )
+    ```
+
+    | Parameter | Type | Default | Description |
+    |-----------|------|---------|-------------|
+    | `initial_price` | float | 1.0 | Starting price |
+    | `initial_liquidity` | float | 1e9 | Base pool liquidity |
+    | `fee_tier` | int | 3000 | Fee tier in bps (500, 3000, 10000) |
+  </Tab>
+
+  <Tab title="DLMM">
+    ```python
+    bt = LPBacktester(
+        amm_type='dlmm',
+        initial_price=1.0,
+        bin_step=25,
+        base_factor=10000,
+        variable_fee_control=40000,
+    )
+    ```
+
+    | Parameter | Type | Default | Description |
+    |-----------|------|---------|-------------|
+    | `initial_price` | float | 1.0 | Starting price |
+    | `bin_step` | int | 25 | Basis points per bin |
+    | `base_factor` | int | 10000 | Fee base factor |
+    | `variable_fee_control` | int | 40000 | Variable fee control |
+  </Tab>
+</Tabs>
+
+## Methods
+
+### run()
+
+Run backtest with given swap data and strategies.
+
+```python
+def run(
+    self,
+    swaps: pd.DataFrame,
+    strategies: Union[Dict[str, List], pd.DataFrame],
+) -> BacktestResult
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `swaps` | DataFrame | Swap events with amount0, amount1, price, timestamp |
+| `strategies` | dict or DataFrame | Strategy parameters to test |
+
+#### Returns
+
+`BacktestResult` - Container with metrics, positions, and analysis methods.
+
+#### Example
+
+```python
+import ammbt as amm
+
+# Create backtester
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+
+# Generate data
+swaps = amm.generate_swaps(n_swaps=10000, seed=42)
+
+# Define strategies
+strategies = {
+    'initial_capital': [10000, 25000],
+    'tick_lower': [-200, -400],
+    'tick_upper': [200, 400],
+    'rebalance_threshold': [0.0, 0.05],
+}
+
+# Run backtest
+result = bt.run(swaps, strategies)
+
+# Access results
+print(result.summary())
+```
+
+## Strategy Parameters
+
+### V2 Strategies
+
+```python
+strategies = {
+    'initial_capital': [10000],       # Capital to provide
+    'rebalance_threshold': [0.05],    # Price deviation trigger
+    'rebalance_frequency': [100],     # Min swaps between rebalances
+}
+```
+
+### V3 Strategies
+
+```python
+strategies = {
+    'initial_capital': [10000],
+    'tick_lower': [-200],             # Lower tick bound
+    'tick_upper': [200],              # Upper tick bound
+    'rebalance_threshold': [0.05],
+    'rebalance_frequency': [100],
+}
+```
+
+### DLMM Strategies
+
+```python
+strategies = {
+    'initial_capital': [10000],
+    'bin_lower': [-40],               # Lower bin bound
+    'bin_upper': [40],                # Upper bin bound
+    'liquidity_shape': [0],           # 0=Spot, 1=Curve, 2=Bid-Ask
+    'rebalance_threshold': [0.05],
+    'rebalance_frequency': [100],
+}
+```
+
+## See Also
+
+- [BacktestResult](/api-reference/core/backtestresult) - Result container
+- [generate_swaps](/api-reference/data/generate-swaps) - Generate test data
+- [Strategy Generators](/api-reference/utils/strategy-generators) - Create strategy grids

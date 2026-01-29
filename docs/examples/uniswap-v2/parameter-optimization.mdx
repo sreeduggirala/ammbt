@@ -1,0 +1,49 @@
+---
+title: "V2 Parameter Optimization"
+description: "Find optimal V2 strategy parameters"
+---
+
+# V2 Parameter Optimization
+
+Systematic parameter search for V2 strategies.
+
+```python
+import ammbt as amm
+
+# Generate data
+swaps = amm.generate_swaps(n_swaps=15000, price_volatility=0.025, seed=42)
+
+# Comprehensive grid
+strategies = {
+    'initial_capital': [10000, 25000, 50000, 100000],
+    'rebalance_threshold': [0.0, 0.02, 0.03, 0.05, 0.07, 0.10, 0.15],
+    'rebalance_frequency': [0, 50, 100, 200, 500],
+}
+
+# Run
+bt = amm.LPBacktester(amm_type='v2')
+result = bt.run(swaps, strategies)
+
+print(f"Tested {len(result.metrics)} strategies")
+
+# Find optimal
+best = result.summary().iloc[0]
+print(f"\nOptimal Strategy:")
+print(f"  Capital: ${best['initial_capital']:,.0f}")
+print(f"  Threshold: {best['rebalance_threshold']:.0%}")
+print(f"  Frequency: {best['rebalance_frequency']} swaps")
+print(f"  Net PnL: ${best['net_pnl']:.2f}")
+
+# Heatmap
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='rebalance_threshold',
+    y_param='rebalance_frequency',
+    metric='sharpe'
+)
+fig.show()
+```
+
+## See Also
+
+- [Strategy Optimization](/tutorials/intermediate/strategy-optimization)

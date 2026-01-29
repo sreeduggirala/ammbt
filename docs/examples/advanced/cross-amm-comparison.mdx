@@ -1,0 +1,60 @@
+---
+title: "Cross-AMM Comparison"
+description: "Compare V2, V3, and DLMM performance"
+---
+
+# Cross-AMM Comparison
+
+Compare strategies across different AMM types.
+
+```python
+import ammbt as amm
+import pandas as pd
+
+# Same data for all
+swaps = amm.generate_swaps(
+    n_swaps=20000,
+    initial_price=1.0,
+    price_volatility=0.025,
+    seed=42
+)
+
+capital = 25000
+results = {}
+
+# V2
+bt_v2 = amm.LPBacktester(amm_type='v2')
+r_v2 = bt_v2.run(swaps, {'initial_capital': [capital]})
+results['V2'] = r_v2.metrics.iloc[0]
+
+# V3 (medium range)
+bt_v3 = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+r_v3 = bt_v3.run(swaps, {
+    'initial_capital': [capital],
+    'tick_lower': [-200],
+    'tick_upper': [200],
+})
+results['V3'] = r_v3.metrics.iloc[0]
+
+# DLMM (Curve shape)
+bt_dlmm = amm.LPBacktester(amm_type='dlmm', bin_step=25)
+r_dlmm = bt_dlmm.run(swaps, {
+    'initial_capital': [capital],
+    'bin_lower': [-40],
+    'bin_upper': [40],
+    'liquidity_shape': [1],
+})
+results['DLMM'] = r_dlmm.metrics.iloc[0]
+
+# Compare
+comparison = pd.DataFrame(results).T
+print("Cross-AMM Comparison:")
+print(comparison[[
+    'net_pnl', 'total_fees_earned', 'impermanent_loss',
+    'gas_spent', 'sharpe', 'time_in_position'
+]])
+```
+
+## See Also
+
+- [Multi-Pool Analysis](/tutorials/advanced/multi-pool-analysis)

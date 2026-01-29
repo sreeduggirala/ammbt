@@ -1,0 +1,97 @@
+---
+title: "Math Functions"
+description: "Core mathematical utilities"
+---
+
+# Math Functions
+
+Numba-compiled mathematical functions for AMM calculations.
+
+## V2 Functions
+
+### get_amount_out
+
+Calculate output amount for a swap.
+
+```python
+def get_amount_out(
+    amount_in: float,
+    reserve_in: float,
+    reserve_out: float,
+    fee: float = 0.003,
+) -> float
+```
+
+### get_amount_in
+
+Calculate required input for desired output.
+
+```python
+def get_amount_in(
+    amount_out: float,
+    reserve_in: float,
+    reserve_out: float,
+    fee: float = 0.003,
+) -> float
+```
+
+## V3 Functions
+
+### get_liquidity_for_amounts
+
+Calculate V3 liquidity from token amounts.
+
+```python
+def get_liquidity_for_amounts(
+    sqrt_price_x96: float,
+    sqrt_price_a_x96: float,
+    sqrt_price_b_x96: float,
+    amount0: float,
+    amount1: float,
+) -> float
+```
+
+### get_amounts_for_liquidity
+
+Calculate token amounts from liquidity.
+
+```python
+def get_amounts_for_liquidity(
+    sqrt_price_x96: float,
+    sqrt_price_a_x96: float,
+    sqrt_price_b_x96: float,
+    liquidity: float,
+) -> Tuple[float, float]
+```
+
+## DLMM Functions
+
+### calculate_dlmm_base_fee
+
+Calculate DLMM base fee.
+
+```python
+def calculate_dlmm_base_fee(
+    bin_step: int,
+    base_factor: int,
+) -> float
+```
+
+### calculate_dlmm_total_fee
+
+Calculate total DLMM fee including variable component.
+
+```python
+def calculate_dlmm_total_fee(
+    bin_step: int,
+    base_factor: int,
+    volatility_accumulator: float,
+    variable_fee_control: int,
+    max_volatility_accumulator: int,
+) -> float
+```
+
+## See Also
+
+- [Tick Conversions](/api-reference/utils/tick-conversions)
+- [Bin Conversions](/api-reference/utils/bin-conversions)

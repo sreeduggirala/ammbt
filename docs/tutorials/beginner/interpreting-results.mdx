@@ -1,0 +1,416 @@
+---
+title: "Interpreting Results"
+description: "Understand backtest metrics and what they mean for your LP strategy"
+---
+
+# Interpreting Backtest Results
+
+After running a backtest, ammBT provides extensive metrics about your strategy performance. This guide explains each metric and how to use them for decision-making.
+
+## The BacktestResult Object
+
+Every backtest returns a `BacktestResult` object containing:
+
+```python
+result = bt.run(swaps, strategies)
+
+# Main components
+result.metrics          # Performance metrics (DataFrame)
+result.strategy_params  # Input parameters (DataFrame)
+result.positions        # Position state array (numpy)
+result.metadata         # Simulation metadata (dict)
+```
+
+## Understanding Metrics
+
+### Core Profitability Metrics
+
+#### Net PnL
+
+The total profit or loss from the position:
+
+$$\text{Net PnL} = \text{Final Value} - \text{Initial Capital}$$
+
+```python
+net_pnl = result.metrics['net_pnl']
+print(f"Net PnL: ${net_pnl.iloc[0]:,.2f}")
+```
+
+**Interpretation:**
+- Positive = profitable position
+- Negative = loss-making position
+- Includes fees, IL, and gas costs
+
+#### Total Return Percentage
+
+Return as a percentage of initial capital:
+
+$$\text{Total Return \%} = \frac{\text{Net PnL}}{\text{Initial Capital}} \times 100$$
+
+```python
+return_pct = result.metrics['total_return_pct']
+print(f"Return: {return_pct.iloc[0]:.2f}%")
+```
+
+**Use Case:** Compare strategies with different capital amounts.
+
+### Risk Metrics
+
+#### Sharpe Ratio
+
+Risk-adjusted return (assuming risk-free rate = 0):
+
+$$\text{Sharpe} = \frac{\text{Mean Return}}{\text{Std Dev of Returns}}$$
+
+```python
+sharpe = result.metrics['sharpe']
+print(f"Sharpe Ratio: {sharpe.iloc[0]:.2f}")
+```
+
+**Interpretation:**
+| Sharpe | Quality |
+|--------|---------|
+| < 0 | Losing money |
+| 0 - 1 | Below average |
+| 1 - 2 | Good |
+| 2 - 3 | Very good |
+| > 3 | Excellent |
+
+#### Maximum Drawdown
+
+The largest peak-to-trough decline:
+
+```python
+max_dd = result.metrics['max_drawdown_pct']
+print(f"Max Drawdown: {max_dd.iloc[0]:.2f}%")
+```
+
+**Use Case:** Understand worst-case scenario. A 20% drawdown means at some point, your position was worth 20% less than its previous high.
+
+### Fee Metrics
+
+#### Total Fees Earned
+
+Sum of all trading fees collected:
+
+```python
+fees = result.metrics['total_fees_earned']
+print(f"Fees Earned: ${fees.iloc[0]:,.2f}")
+```
+
+#### Fee APR
+
+Annualized fee income (if available):
+
+```python
+# Calculate manually if needed
+days = (swaps['timestamp'].iloc[-1] - swaps['timestamp'].iloc[0]) / 86400
+fee_apr = (fees.iloc[0] / 10000) * (365 / days) * 100
+print(f"Fee APR: {fee_apr:.1f}%")
+```
+
+### Impermanent Loss Metrics
+
+#### Impermanent Loss (IL)
+
+Value lost due to price divergence from holding tokens in the pool vs. just holding them:
+
+```python
+il = result.metrics['impermanent_loss']
+print(f"Impermanent Loss: ${il.iloc[0]:,.2f}")
+```
+
+<Warning>
+IL is typically reported as a negative number (a loss). A value of -$500 means you lost $500 to impermanent loss.
+</Warning>
+
+#### IL as Percentage
+
+```python
+initial_capital = result.strategy_params['initial_capital'].iloc[0]
+il_pct = (il.iloc[0] / initial_capital) * 100
+print(f"IL: {il_pct:.2f}% of capital")
+```
+
+### Activity Metrics
+
+#### Number of Rebalances
+
+How many times the position was rebalanced:
+
+```python
+rebalances = result.metrics['num_rebalances']
+print(f"Rebalances: {rebalances.iloc[0]}")
+```
+
+**Considerations:**
+- More rebalances = more gas costs
+- More rebalances = potentially less IL (for mean-reverting prices)
+- Too many rebalances = overtrading
+
+#### Gas Spent
+
+Total gas costs in USD:
+
+```python
+gas = result.metrics['gas_spent']
+print(f"Gas Spent: ${gas.iloc[0]:,.2f}")
+```
+
+**Default Gas Costs:**
+| AMM Type | Cost per Rebalance |
+|----------|-------------------|
+| V2 | $50 |
+| V3 | $100 |
+| DLMM | $0.50 |
+
+#### Time in Position
+
+Percentage of time the position was active (V3/DLMM only):
+
+```python
+time_in = result.metrics['time_in_position']
+print(f"Time in Position: {time_in.iloc[0]:.1f}%")
+```
+
+For concentrated liquidity, this shows how often you were "in range" and earning fees.
+
+## Analyzing the Summary
+
+The `summary()` method returns strategies sorted by net PnL:
+
+```python
+summary = result.summary()
+print(summary.head(10))
+```
+
+### Identifying Patterns
+
+```python
+# Best performing strategies
+top_5 = summary.head(5)
+
+# What do they have in common?
+print("Common traits of top strategies:")
+print(f"Avg rebalance threshold: {top_5['rebalance_threshold'].mean():.2%}")
+print(f"Avg num rebalances: {top_5['num_rebalances'].mean():.1f}")
+```
+
+### Filtering Strategies
+
+```python
+# Find strategies with Sharpe > 1 and drawdown < 10%
+good_strategies = summary[
+    (summary['sharpe'] > 1) &
+    (summary['max_drawdown_pct'] < 10)
+]
+print(f"Found {len(good_strategies)} good strategies")
+```
+
+## Position History Analysis
+
+Get detailed time-series data for any strategy:
+
+```python
+history = result.get_position_history(strategy_idx=0)
+```
+
+### Available Columns
+
+| Column | Description |
+|--------|-------------|
+| `liquidity` | LP tokens or liquidity amount |
+| `token0_balance` | Current token0 holdings |
+| `token1_balance` | Current token1 holdings |
+| `uncollected_fees_0` | Accumulated token0 fees |
+| `uncollected_fees_1` | Accumulated token1 fees |
+| `gas_spent` | Cumulative gas costs |
+| `is_active` | Position is open |
+| `num_rebalances` | Rebalance count to this point |
+
+### Calculating Portfolio Value
+
+```python
+prices = swaps['price'].values
+
+# Total value = tokens + fees - gas
+portfolio_value = (
+    (history['token0_balance'] + history['uncollected_fees_0']) * prices +
+    (history['token1_balance'] + history['uncollected_fees_1']) -
+    history['gas_spent']
+)
+
+# Plot value over time
+import plotly.express as px
+fig = px.line(y=portfolio_value, title='Portfolio Value')
+fig.show()
+```
+
+### Identifying Rebalance Events
+
+```python
+# Find where rebalances happened
+rebalances = history['num_rebalances'].diff() > 0
+rebalance_indices = history.index[rebalances].tolist()
+
+print(f"Rebalanced at swaps: {rebalance_indices}")
+```
+
+### Fee Accumulation
+
+```python
+# Plot cumulative fees
+cumulative_fees = (
+    history['uncollected_fees_0'] * prices +
+    history['uncollected_fees_1']
+)
+
+fig = px.line(y=cumulative_fees, title='Cumulative Fees Earned')
+fig.show()
+```
+
+## Comparing Strategies
+
+### Side-by-Side Comparison
+
+```python
+def compare_strategies(result, indices):
+    """Compare multiple strategies."""
+    comparison = result.metrics.loc[indices, [
+        'initial_capital', 'net_pnl', 'total_return_pct',
+        'sharpe', 'max_drawdown_pct', 'num_rebalances'
+    ]]
+    return comparison
+
+# Compare top 3 strategies
+top_3 = result.summary().index[:3].tolist()
+print(compare_strategies(result, top_3))
+```
+
+### Performance Attribution
+
+```python
+def attribution(result, idx):
+    """Break down performance into components."""
+    m = result.metrics.loc[idx]
+
+    print(f"Strategy {idx} Attribution:")
+    print(f"  Fee Income:     ${m['total_fees_earned']:>10,.2f}")
+    print(f"  Impermanent Loss: ${m['impermanent_loss']:>10,.2f}")
+    print(f"  Gas Costs:      ${-m['gas_spent']:>10,.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Net PnL:        ${m['net_pnl']:>10,.2f}")
+
+attribution(result, 0)
+```
+
+Output:
+```
+Strategy 0 Attribution:
+  Fee Income:     $    523.45
+  Impermanent Loss: $   -234.56
+  Gas Costs:      $    -50.00
+  ─────────────────────────────
+  Net PnL:        $    238.89
+```
+
+## Statistical Analysis
+
+### Return Distribution
+
+```python
+import numpy as np
+
+returns = result.metrics['total_return_pct']
+
+print(f"Return Statistics:")
+print(f"  Mean:   {returns.mean():.2f}%")
+print(f"  Median: {returns.median():.2f}%")
+print(f"  Std:    {returns.std():.2f}%")
+print(f"  Min:    {returns.min():.2f}%")
+print(f"  Max:    {returns.max():.2f}%")
+
+# Percentiles
+print(f"\nPercentiles:")
+for p in [10, 25, 50, 75, 90]:
+    print(f"  {p}th: {np.percentile(returns, p):.2f}%")
+```
+
+### Correlation Analysis
+
+```python
+# Which parameters most affect returns?
+params_and_returns = result.metrics[
+    ['rebalance_threshold', 'rebalance_frequency', 'total_return_pct']
+]
+
+correlations = params_and_returns.corr()['total_return_pct']
+print("Correlation with returns:")
+print(correlations)
+```
+
+## Common Patterns to Look For
+
+<Accordion title="Pattern: High fees but negative PnL">
+This indicates impermanent loss exceeds fee income.
+
+**Solutions:**
+- Widen your range (V3/DLMM)
+- Reduce rebalance frequency
+- Consider lower-volatility pairs
+</Accordion>
+
+<Accordion title="Pattern: Many rebalances but low returns">
+Overtrading - gas costs eating into profits.
+
+**Solutions:**
+- Increase rebalance threshold
+- Increase minimum rebalance frequency
+- Consider if rebalancing is worth it
+</Accordion>
+
+<Accordion title="Pattern: High Sharpe but low absolute returns">
+Low-risk strategy that's conservative.
+
+**Solutions:**
+- Increase capital allocation
+- Narrow range for higher capital efficiency (V3)
+- Accept higher risk for higher returns
+</Accordion>
+
+<Accordion title="Pattern: Out-of-range most of the time (V3/DLMM)">
+Range too narrow for market conditions.
+
+**Solutions:**
+- Widen tick/bin range
+- Add rebalancing to recenter position
+- Use dynamic range adjustment
+</Accordion>
+
+## Key Takeaways
+
+<Check>
+Net PnL = Fees - IL - Gas Costs
+</Check>
+
+<Check>
+Sharpe ratio measures risk-adjusted returns
+</Check>
+
+<Check>
+Max drawdown shows worst-case scenario
+</Check>
+
+<Check>
+Position history allows detailed analysis
+</Check>
+
+<Check>
+Compare strategies using multiple metrics, not just PnL
+</Check>
+
+## What's Next?
+
+<Card title="Basic Plotting" icon="chart-line" href="/tutorials/beginner/basic-plotting">
+  Learn to visualize your results effectively
+</Card>

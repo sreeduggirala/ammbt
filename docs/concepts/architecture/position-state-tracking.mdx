@@ -1,0 +1,311 @@
+---
+title: "Position State Tracking"
+description: "How ammBT tracks LP position state throughout simulations"
+---
+
+# Position State Tracking
+
+ammBT maintains detailed state for every LP position at every point in the simulation. This page explains how position state is structured, updated, and accessed.
+
+## Position State Arrays
+
+Each AMM type has a specific position structure stored as a NumPy structured array:
+
+### V2 Position State
+
+```python
+V2_POSITION_DTYPE = np.dtype([
+    ('liquidity', 'f8'),           # LP tokens owned
+    ('token0_balance', 'f8'),      # Current token0 amount
+    ('token1_balance', 'f8'),      # Current token1 amount
+    ('uncollected_fees_0', 'f8'),  # Accumulated token0 fees
+    ('uncollected_fees_1', 'f8'),  # Accumulated token1 fees
+    ('gas_spent', 'f8'),           # Cumulative gas costs (USD)
+    ('is_active', '?'),            # Position is open
+    ('last_rebalance_idx', 'i4'),  # Swap index of last rebalance
+    ('num_rebalances', 'i4'),      # Total rebalance count
+])
+```
+
+### V3 Position State
+
+```python
+V3_POSITION_DTYPE = np.dtype([
+    ('tick_lower', 'i4'),              # Lower tick bound
+    ('tick_upper', 'i4'),              # Upper tick bound
+    ('liquidity', 'f8'),               # Position liquidity
+    ('token0_balance', 'f8'),          # Token0 amount
+    ('token1_balance', 'f8'),          # Token1 amount
+    ('fee_growth_inside_0_last', 'f8'), # Fee checkpoint token0
+    ('fee_growth_inside_1_last', 'f8'), # Fee checkpoint token1
+    ('uncollected_fees_0', 'f8'),      # Accumulated fees token0
+    ('uncollected_fees_1', 'f8'),      # Accumulated fees token1
+    ('is_active', '?'),                # Position active
+    ('is_in_range', '?'),              # Currently in range
+    ('gas_spent', 'f8'),               # Cumulative gas
+    ('last_rebalance_idx', 'i4'),      # Last rebalance index
+    ('num_rebalances', 'i4'),          # Rebalance count
+])
+```
+
+### DLMM Position State
+
+```python
+DLMM_POSITION_DTYPE = np.dtype([
+    ('bin_lower', 'i4'),               # Lower bin bound
+    ('bin_upper', 'i4'),               # Upper bin bound
+    ('liquidity', 'f8'),               # Total position liquidity
+    ('liquidity_shape', 'i4'),         # Distribution shape
+    ('token_x_balance', 'f8'),         # Token X amount
+    ('token_y_balance', 'f8'),         # Token Y amount
+    ('uncollected_fees_x', 'f8'),      # Accumulated X fees
+    ('uncollected_fees_y', 'f8'),      # Accumulated Y fees
+    ('fee_growth_global_x', 'f8'),     # Fee checkpoint X
+    ('fee_growth_global_y', 'f8'),     # Fee checkpoint Y
+    ('is_active', '?'),                # Position active
+    ('is_in_range', '?'),              # Active bin in range
+    ('gas_spent', 'f8'),               # Cumulative gas
+    ('last_rebalance_idx', 'i4'),      # Last rebalance index
+    ('num_rebalances', 'i4'),          # Rebalance count
+])
+```
+
+## State Array Structure
+
+The complete state is a 2D array:
+
+```python
+# Shape: (n_swaps + 1, n_strategies)
+positions = np.zeros(
+    (n_swaps + 1, n_strategies),
+    dtype=position_dtype
+)
+
+# Row 0: Initial state
+# Row t: State after processing swap t-1
+# Row n_swaps: Final state
+```
+
+### Accessing State
+
+```python
+# State at time t for strategy s
+state = positions[t, s]
+
+# All strategies at time t
+all_states_at_t = positions[t, :]
+
+# One strategy across all time
+strategy_history = positions[:, s]
+
+# Specific field across all strategies at time t
+all_liquidities = positions[t]['liquidity']
+
+# Specific field for one strategy across time
+liquidity_history = positions[:, s]['liquidity']
+```
+
+## State Initialization
+
+Positions are initialized at row 0:
+
+```python
+def initialize_positions(n_strategies, n_swaps, strategy_params):
+    """Initialize position state array."""
+
+    positions = np.zeros(
+        (n_swaps + 1, n_strategies),
+        dtype=V3_POSITION_DTYPE
+    )
+
+    for i in range(n_strategies):
+        capital = strategy_params[i]['initial_capital']
+        tick_lower = strategy_params[i]['tick_lower']
+        tick_upper = strategy_params[i]['tick_upper']
+
+        # Calculate initial token amounts and liquidity
+        token0, token1, liquidity = calculate_initial_amounts(
+            capital, initial_price, tick_lower, tick_upper
+        )
+
+        positions[0, i] = (
+            tick_lower,          # tick_lower
+            tick_upper,          # tick_upper
+            liquidity,           # liquidity
+            token0,              # token0_balance
+            token1,              # token1_balance
+            0.0,                 # fee_growth_inside_0_last
+            0.0,                 # fee_growth_inside_1_last
+            0.0,                 # uncollected_fees_0
+            0.0,                 # uncollected_fees_1
+            True,                # is_active
+            True,                # is_in_range (assume starts in range)
+            0.0,                 # gas_spent
+            0,                   # last_rebalance_idx
+            0,                   # num_rebalances
+        )
+
+    return positions
+```
+
+## State Updates
+
+Each swap triggers an update:
+
+```python
+def update_positions(positions, t, swap, pool_state, strategy_params):
+    """Update all positions for swap at index t."""
+
+    current = positions[t]
+    new_state = current.copy()
+
+    # Update pool state
+    price = swap['price']
+    current_tick = price_to_tick(price)
+
+    # Check in-range status for all strategies
+    new_state['is_in_range'] = (
+        (current['tick_lower'] <= current_tick) &
+        (current_tick < current['tick_upper'])
+    )
+
+    # Calculate fee accrual for in-range positions
+    active_in_range = current['is_active'] & new_state['is_in_range']
+    fee_share = calculate_fees(
+        swap, current['liquidity'], active_in_range, pool_state
+    )
+    new_state['uncollected_fees_0'] += fee_share['token0']
+    new_state['uncollected_fees_1'] += fee_share['token1']
+
+    # Update token balances based on price change
+    new_state = update_balances(new_state, price, pool_state)
+
+    # Check and apply rebalances
+    should_rebalance = check_rebalance(current, strategy_params, t, price)
+    new_state = apply_rebalances(new_state, should_rebalance, price)
+
+    # Store updated state
+    positions[t + 1] = new_state
+```
+
+## Rebalance Handling
+
+When a rebalance is triggered:
+
+```python
+def apply_rebalance(position, price, tick_lower, tick_upper):
+    """Apply rebalance to a single position."""
+
+    # 1. Calculate current value
+    value = position['token0_balance'] * price + position['token1_balance']
+    value += position['uncollected_fees_0'] * price
+    value += position['uncollected_fees_1']
+
+    # 2. Subtract gas cost
+    gas_cost = 100.0  # USD for V3
+    value -= gas_cost
+
+    # 3. Calculate new range (recenter)
+    current_tick = price_to_tick(price)
+    range_width = position['tick_upper'] - position['tick_lower']
+    new_tick_lower = current_tick - range_width // 2
+    new_tick_upper = current_tick + range_width // 2
+
+    # 4. Calculate new amounts for the value
+    new_token0, new_token1, new_liquidity = calculate_amounts(
+        value, price, new_tick_lower, new_tick_upper
+    )
+
+    # 5. Return updated position
+    return (
+        new_tick_lower,
+        new_tick_upper,
+        new_liquidity,
+        new_token0,
+        new_token1,
+        0.0,  # Reset fee growth checkpoints
+        0.0,
+        0.0,  # Fees collected during rebalance
+        0.0,
+        True,
+        True,  # Assume in range after recenter
+        position['gas_spent'] + gas_cost,
+        position['last_rebalance_idx'] + 1,  # Updated by caller
+        position['num_rebalances'] + 1,
+    )
+```
+
+## Accessing Position History
+
+After simulation, get detailed history:
+
+```python
+result = bt.run(swaps, strategies)
+
+# Get position history for one strategy
+history = result.get_position_history(strategy_idx=0)
+
+# Returns DataFrame with columns matching dtype fields
+print(history.columns)
+# Index(['liquidity', 'token0_balance', 'token1_balance',
+#        'uncollected_fees_0', 'uncollected_fees_1', 'gas_spent',
+#        'is_active', 'num_rebalances'], dtype='object')
+
+# Access specific columns
+liquidity = history['liquidity']
+fees = history['uncollected_fees_0'] + history['uncollected_fees_1']
+```
+
+## Memory Efficiency
+
+### Pre-allocation
+
+All memory allocated upfront:
+
+```python
+# Total memory = n_swaps × n_strategies × sizeof(position)
+# For V3: ~80 bytes per position
+memory_bytes = n_swaps * n_strategies * 80
+memory_gb = memory_bytes / (1024**3)
+```
+
+### Streaming Mode (Future)
+
+For very large datasets, process in chunks:
+
+```python
+# Conceptual streaming approach
+for chunk_start in range(0, n_swaps, chunk_size):
+    chunk_end = min(chunk_start + chunk_size, n_swaps)
+    process_chunk(swaps[chunk_start:chunk_end], ...)
+    # Keep only final state, discard history
+```
+
+## Key Takeaways
+
+<Check>
+Position state is a structured NumPy array
+</Check>
+
+<Check>
+Full history maintained for analysis
+</Check>
+
+<Check>
+Updates are vectorized across all strategies
+</Check>
+
+<Check>
+Memory scales with swaps × strategies
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Strategy Parameter Grids" icon="grid" href="/concepts/architecture/strategy-parameter-grids">
+    How strategy parameters are expanded
+  </Card>
+  <Card title="Metrics Calculations" icon="calculator" href="/concepts/metrics/pnl-calculations">
+    How metrics are computed from state
+  </Card>
+</CardGroup>

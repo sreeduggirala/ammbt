@@ -1,0 +1,315 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "ammBT Documentation",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5",
+    "anchors": {
+      "from": "#6366F1",
+      "to": "#8B5CF6"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/your-org/ammbt"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "/getting-started/introduction"
+  },
+  "tabs": [
+    {
+      "name": "Documentation",
+      "url": "/"
+    },
+    {
+      "name": "API Reference",
+      "url": "/api-reference"
+    },
+    {
+      "name": "Examples",
+      "url": "/examples"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/your-org/ammbt"
+    },
+    {
+      "name": "Community",
+      "icon": "discord",
+      "url": "https://discord.gg/ammbt"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "getting-started/introduction",
+        "getting-started/installation",
+        "getting-started/quickstart",
+        "getting-started/first-backtest"
+      ]
+    },
+    {
+      "group": "Tutorials",
+      "pages": [
+        {
+          "group": "Beginner",
+          "pages": [
+            "tutorials/beginner/understanding-amms",
+            "tutorials/beginner/your-first-v2-backtest",
+            "tutorials/beginner/interpreting-results",
+            "tutorials/beginner/basic-plotting"
+          ]
+        },
+        {
+          "group": "Intermediate",
+          "pages": [
+            "tutorials/intermediate/uniswap-v3-backtesting",
+            "tutorials/intermediate/meteora-dlmm-backtesting",
+            "tutorials/intermediate/strategy-optimization",
+            "tutorials/intermediate/custom-rebalancing",
+            "tutorials/intermediate/working-with-real-data"
+          ]
+        },
+        {
+          "group": "Advanced",
+          "pages": [
+            "tutorials/advanced/vectorized-strategies",
+            "tutorials/advanced/custom-amm-simulator",
+            "tutorials/advanced/performance-optimization",
+            "tutorials/advanced/multi-pool-analysis",
+            "tutorials/advanced/live-swap-streaming"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "Concepts",
+      "pages": [
+        {
+          "group": "AMM Fundamentals",
+          "pages": [
+            "concepts/amm-fundamentals/what-is-an-amm",
+            "concepts/amm-fundamentals/cpamm-uniswap-v2",
+            "concepts/amm-fundamentals/clmm-uniswap-v3",
+            "concepts/amm-fundamentals/dlmm-meteora",
+            "concepts/amm-fundamentals/impermanent-loss"
+          ]
+        },
+        {
+          "group": "Architecture",
+          "pages": [
+            "concepts/architecture/vectorized-design",
+            "concepts/architecture/numba-compilation",
+            "concepts/architecture/position-state-tracking",
+            "concepts/architecture/strategy-parameter-grids"
+          ]
+        },
+        {
+          "group": "Metrics",
+          "pages": [
+            "concepts/metrics/pnl-calculations",
+            "concepts/metrics/impermanent-loss-tracking",
+            "concepts/metrics/capital-efficiency",
+            "concepts/metrics/risk-metrics"
+          ]
+        },
+        {
+          "group": "Data",
+          "pages": [
+            "concepts/data/synthetic-generation",
+            "concepts/data/price-models",
+            "concepts/data/real-swap-data",
+            "concepts/data/data-loaders"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "How-To Guides",
+      "pages": [
+        {
+          "group": "Strategies",
+          "pages": [
+            "how-to/strategies/create-v2-strategies",
+            "how-to/strategies/create-v3-tick-ranges",
+            "how-to/strategies/create-dlmm-bin-ranges",
+            "how-to/strategies/rebalancing-strategies",
+            "how-to/strategies/parameter-sweeps"
+          ]
+        },
+        {
+          "group": "Data",
+          "pages": [
+            "how-to/data/generate-synthetic-swaps",
+            "how-to/data/load-uniswap-data",
+            "how-to/data/load-solana-data",
+            "how-to/data/stream-live-swaps"
+          ]
+        },
+        {
+          "group": "Visualization",
+          "pages": [
+            "how-to/visualization/performance-plots",
+            "how-to/visualization/metrics-heatmaps",
+            "how-to/visualization/efficient-frontier",
+            "how-to/visualization/pnl-distribution",
+            "how-to/visualization/custom-charts"
+          ]
+        },
+        {
+          "group": "Analysis",
+          "pages": [
+            "how-to/analysis/compare-strategies",
+            "how-to/analysis/find-optimal-ranges",
+            "how-to/analysis/backtest-validation"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "API Reference",
+      "pages": [
+        "api-reference/overview",
+        {
+          "group": "Core",
+          "pages": [
+            "api-reference/core/lpbacktester",
+            "api-reference/core/backtestresult"
+          ]
+        },
+        {
+          "group": "AMMs",
+          "pages": [
+            "api-reference/amms/base-amm-simulator",
+            "api-reference/amms/uniswap-v2-simulator",
+            "api-reference/amms/uniswap-v3-simulator",
+            "api-reference/amms/meteora-dlmm-simulator"
+          ]
+        },
+        {
+          "group": "Data",
+          "pages": [
+            "api-reference/data/generate-swaps",
+            "api-reference/data/generate-price-path",
+            "api-reference/data/data-loaders"
+          ]
+        },
+        {
+          "group": "Plotting",
+          "pages": [
+            "api-reference/plotting/plot-performance",
+            "api-reference/plotting/plot-metrics-heatmap",
+            "api-reference/plotting/plot-efficient-frontier",
+            "api-reference/plotting/plot-pnl-distribution"
+          ]
+        },
+        {
+          "group": "Utils",
+          "pages": [
+            "api-reference/utils/math-functions",
+            "api-reference/utils/tick-conversions",
+            "api-reference/utils/bin-conversions",
+            "api-reference/utils/strategy-generators",
+            "api-reference/utils/config"
+          ]
+        },
+        {
+          "group": "Analytics",
+          "pages": [
+            "api-reference/analytics/calculate-metrics",
+            "api-reference/analytics/capital-efficiency"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "Examples",
+      "pages": [
+        "examples/gallery",
+        {
+          "group": "Uniswap V2",
+          "pages": [
+            "examples/uniswap-v2/basic-backtest",
+            "examples/uniswap-v2/rebalancing-strategies",
+            "examples/uniswap-v2/parameter-optimization",
+            "examples/uniswap-v2/real-data-analysis"
+          ]
+        },
+        {
+          "group": "Uniswap V3",
+          "pages": [
+            "examples/uniswap-v3/concentrated-liquidity",
+            "examples/uniswap-v3/range-strategies",
+            "examples/uniswap-v3/fee-tier-comparison",
+            "examples/uniswap-v3/out-of-range-analysis"
+          ]
+        },
+        {
+          "group": "Meteora DLMM",
+          "pages": [
+            "examples/meteora-dlmm/basic-dlmm",
+            "examples/meteora-dlmm/liquidity-shapes",
+            "examples/meteora-dlmm/dynamic-fees",
+            "examples/meteora-dlmm/solana-pools"
+          ]
+        },
+        {
+          "group": "Advanced",
+          "pages": [
+            "examples/advanced/cross-amm-comparison",
+            "examples/advanced/monte-carlo-simulation",
+            "examples/advanced/custom-metrics",
+            "examples/advanced/production-pipeline"
+          ]
+        }
+      ]
+    },
+    {
+      "group": "Reference",
+      "pages": [
+        "reference/changelog",
+        "reference/migration-guide",
+        "reference/faq",
+        "reference/troubleshooting",
+        "reference/glossary"
+      ]
+    },
+    {
+      "group": "Contributing",
+      "pages": [
+        "contributing/overview",
+        "contributing/development-setup",
+        "contributing/code-style",
+        "contributing/testing",
+        "contributing/documentation"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/your-org/ammbt",
+    "discord": "https://discord.gg/ammbt",
+    "twitter": "https://twitter.com/ammbt"
+  },
+  "feedback": {
+    "thumbsRating": true,
+    "suggestEdit": true,
+    "raiseIssue": true
+  },
+  "modeToggle": {
+    "default": "dark"
+  },
+  "backgroundImage": "/images/background.png"
+}

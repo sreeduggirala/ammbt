@@ -1,0 +1,404 @@
+---
+title: "Custom Rebalancing"
+description: "Implement advanced rebalancing strategies for LP positions"
+---
+
+# Custom Rebalancing
+
+Rebalancing is critical for LP profitability, especially in concentrated liquidity protocols. This tutorial covers advanced rebalancing strategies beyond simple threshold triggers.
+
+## Built-in Rebalancing Options
+
+ammBT supports two built-in rebalance triggers:
+
+### Price Threshold
+
+Rebalance when price moves by a percentage from entry:
+
+```python
+strategies = {
+    'rebalance_threshold': [0.05],  # 5% price move
+    'rebalance_frequency': [0],     # No frequency limit
+}
+```
+
+### Swap Frequency
+
+Rebalance after a minimum number of swaps:
+
+```python
+strategies = {
+    'rebalance_threshold': [0.0],   # No price trigger
+    'rebalance_frequency': [200],   # Every 200 swaps minimum
+}
+```
+
+### Combined
+
+Both triggers can work together (OR logic):
+
+```python
+strategies = {
+    'rebalance_threshold': [0.05],  # 5% price move OR
+    'rebalance_frequency': [200],   # 200 swaps, whichever comes first
+}
+```
+
+## Understanding Rebalancing Costs
+
+Each rebalance incurs costs:
+
+| AMM | Gas Cost | Actions |
+|-----|----------|---------|
+| V2 | ~$50 | Remove liquidity, swap, re-add |
+| V3 | ~$100 | Burn position, collect, mint new |
+| DLMM | ~$0.50 | Remove bins, add to new bins |
+
+```python
+# Analyze rebalancing impact
+result = bt.run(swaps, strategies)
+
+for idx in result.metrics.index[:5]:
+    m = result.metrics.loc[idx]
+    fees = m['total_fees_earned']
+    gas = m['gas_spent']
+    rebalances = m['num_rebalances']
+    cost_per_rebalance = gas / rebalances if rebalances > 0 else 0
+
+    print(f"Strategy {idx}:")
+    print(f"  Rebalances: {rebalances}")
+    print(f"  Total gas: ${gas:.2f}")
+    print(f"  Gas per rebalance: ${cost_per_rebalance:.2f}")
+    print(f"  Fees earned: ${fees:.2f}")
+    print(f"  Net after gas: ${fees - gas:.2f}\n")
+```
+
+## Rebalancing Strategies Comparison
+
+### Strategy 1: Never Rebalance (Passive)
+
+```python
+passive = {
+    'initial_capital': [25000],
+    'tick_lower': [-300],
+    'tick_upper': [300],
+    'rebalance_threshold': [0.0],
+    'rebalance_frequency': [0],
+}
+```
+
+**Pros**: Zero gas costs
+**Cons**: Position may go out of range
+
+### Strategy 2: Aggressive Rebalancing
+
+```python
+aggressive = {
+    'initial_capital': [25000],
+    'tick_lower': [-300],
+    'tick_upper': [300],
+    'rebalance_threshold': [0.03],  # 3%
+    'rebalance_frequency': [50],     # Every 50 swaps
+}
+```
+
+**Pros**: Always near current price
+**Cons**: High gas costs, may overtrade
+
+### Strategy 3: Conservative Rebalancing
+
+```python
+conservative = {
+    'initial_capital': [25000],
+    'tick_lower': [-300],
+    'tick_upper': [300],
+    'rebalance_threshold': [0.15],  # 15%
+    'rebalance_frequency': [500],    # Every 500 swaps
+}
+```
+
+**Pros**: Lower gas costs
+**Cons**: May stay out of range longer
+
+### Compare All Three
+
+```python
+import ammbt as amm
+import pandas as pd
+
+swaps = amm.generate_swaps(n_swaps=10000, price_volatility=0.03, seed=42)
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+
+results = {}
+for name, strat in [('Passive', passive), ('Aggressive', aggressive), ('Conservative', conservative)]:
+    result = bt.run(swaps, strat)
+    m = result.metrics.iloc[0]
+    results[name] = {
+        'Net PnL': m['net_pnl'],
+        'Fees': m['total_fees_earned'],
+        'Gas': m['gas_spent'],
+        'Rebalances': m['num_rebalances'],
+        'Time in Range': m['time_in_position'],
+    }
+
+print(pd.DataFrame(results).T)
+```
+
+## Analyzing Rebalance Events
+
+```python
+# Get position history for detailed analysis
+history = result.get_position_history(0)
+
+# Find rebalance events
+rebalance_events = history['num_rebalances'].diff() > 0
+rebalance_indices = history.index[rebalance_events].tolist()
+
+print(f"Rebalanced at swap indices: {rebalance_indices}")
+
+# Analyze price at each rebalance
+if rebalance_indices:
+    for idx in rebalance_indices[:5]:
+        price_before = swaps.loc[idx-1, 'price'] if idx > 0 else swaps.loc[0, 'price']
+        price_at = swaps.loc[idx, 'price']
+        print(f"  Swap {idx}: Price {price_before:.4f} -> {price_at:.4f}")
+```
+
+## Dynamic Range Adjustment
+
+When rebalancing V3/DLMM positions, ammBT recenters the range around the current price.
+
+### How It Works
+
+```python
+# Original position
+tick_lower = -300
+tick_upper = 300
+range_width = tick_upper - tick_lower  # 600 ticks
+
+# After rebalance at new price
+# New position is centered on current tick
+new_tick_lower = current_tick - range_width // 2
+new_tick_upper = current_tick + range_width // 2
+```
+
+### Visualizing Range Movement
+
+```python
+import plotly.graph_objects as go
+
+history = result.get_position_history(0)
+prices = swaps['price'].values
+
+# For V3, we track tick bounds in history
+if 'tick_lower' in history.columns:
+    fig = go.Figure()
+
+    # Price line
+    fig.add_trace(go.Scatter(y=prices, name='Price', line=dict(color='white')))
+
+    # Range bounds
+    tick_lower_prices = [tick_to_price(t) for t in history['tick_lower']]
+    tick_upper_prices = [tick_to_price(t) for t in history['tick_upper']]
+
+    fig.add_trace(go.Scatter(y=tick_lower_prices, name='Lower Bound',
+                            line=dict(color='red', dash='dash')))
+    fig.add_trace(go.Scatter(y=tick_upper_prices, name='Upper Bound',
+                            line=dict(color='green', dash='dash')))
+
+    fig.update_layout(title='Price and Range Bounds Over Time')
+    fig.show()
+```
+
+## Optimal Rebalance Threshold Finding
+
+Find the threshold that maximizes net PnL:
+
+```python
+# Test many thresholds
+thresholds = [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10, 0.15, 0.20]
+
+threshold_results = []
+for thresh in thresholds:
+    result = bt.run(swaps, {
+        'initial_capital': [25000],
+        'tick_lower': [-300],
+        'tick_upper': [300],
+        'rebalance_threshold': [thresh],
+        'rebalance_frequency': [0],
+    })
+    m = result.metrics.iloc[0]
+    threshold_results.append({
+        'threshold': thresh,
+        'net_pnl': m['net_pnl'],
+        'fees': m['total_fees_earned'],
+        'gas': m['gas_spent'],
+        'rebalances': m['num_rebalances'],
+    })
+
+df = pd.DataFrame(threshold_results)
+print(df)
+
+# Find optimal
+optimal_idx = df['net_pnl'].idxmax()
+print(f"\nOptimal threshold: {df.loc[optimal_idx, 'threshold']:.0%}")
+```
+
+### Visualize
+
+```python
+import plotly.express as px
+
+fig = px.line(
+    df,
+    x='threshold',
+    y='net_pnl',
+    title='Net PnL vs Rebalance Threshold',
+    markers=True
+)
+fig.add_hline(y=df.loc[optimal_idx, 'net_pnl'],
+              line_dash='dash',
+              annotation_text='Optimal')
+fig.show()
+```
+
+## Frequency-Based Optimization
+
+```python
+# Test different frequencies
+frequencies = [0, 25, 50, 100, 200, 500, 1000]
+
+frequency_results = []
+for freq in frequencies:
+    result = bt.run(swaps, {
+        'initial_capital': [25000],
+        'tick_lower': [-300],
+        'tick_upper': [300],
+        'rebalance_threshold': [0.0],  # Only frequency-based
+        'rebalance_frequency': [freq],
+    })
+    m = result.metrics.iloc[0]
+    frequency_results.append({
+        'frequency': freq,
+        'net_pnl': m['net_pnl'],
+        'rebalances': m['num_rebalances'],
+        'time_in_range': m['time_in_position'],
+    })
+
+df_freq = pd.DataFrame(frequency_results)
+print(df_freq)
+```
+
+## Combining Strategies
+
+Test combinations of threshold and frequency:
+
+```python
+# Grid of combinations
+combined_strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-300],
+    'tick_upper': [300],
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.10],
+    'rebalance_frequency': [0, 100, 200, 500],
+}
+
+result = bt.run(swaps, combined_strategies)
+
+# Heatmap
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='rebalance_threshold',
+    y_param='rebalance_frequency',
+    metric='net_pnl'
+)
+fig.update_layout(title='Net PnL by Rebalance Configuration')
+fig.show()
+```
+
+## Rebalancing Under Different Market Conditions
+
+Test how rebalancing performs in different volatility regimes:
+
+```python
+volatilities = [0.01, 0.02, 0.03, 0.05, 0.10]
+thresholds = [0.0, 0.05, 0.10]
+
+vol_results = []
+for vol in volatilities:
+    test_swaps = amm.generate_swaps(
+        n_swaps=5000,
+        price_volatility=vol,
+        seed=42
+    )
+
+    for thresh in thresholds:
+        result = bt.run(test_swaps, {
+            'initial_capital': [25000],
+            'tick_lower': [-300],
+            'tick_upper': [300],
+            'rebalance_threshold': [thresh],
+        })
+        m = result.metrics.iloc[0]
+        vol_results.append({
+            'volatility': vol,
+            'threshold': thresh,
+            'net_pnl': m['net_pnl'],
+            'sharpe': m['sharpe'],
+        })
+
+df_vol = pd.DataFrame(vol_results)
+
+# Pivot for analysis
+pivot = df_vol.pivot(index='volatility', columns='threshold', values='net_pnl')
+print("Net PnL by Volatility and Threshold:")
+print(pivot)
+```
+
+### Key Insights
+
+- **Low volatility**: Less rebalancing needed
+- **High volatility**: More rebalancing can help, but gas costs matter
+- **Moderate volatility**: Balance between staying in range and costs
+
+## Best Practices
+
+<Check>
+Start with no rebalancing, then add if it improves results
+</Check>
+
+<Check>
+Consider gas costs for your specific AMM/chain
+</Check>
+
+<Check>
+Test across multiple volatility scenarios
+</Check>
+
+<Check>
+Use walk-forward testing to validate optimal parameters
+</Check>
+
+<Check>
+For DLMM, rebalancing is cheap - can be more aggressive
+</Check>
+
+## Summary Table
+
+| Market Condition | V2 | V3 | DLMM |
+|-----------------|-----|-----|------|
+| Low volatility | No rebalance | 10-15% threshold | 5-10% threshold |
+| Medium volatility | 10% threshold | 5-10% threshold | 3-5% threshold |
+| High volatility | 5-10% threshold | 3-5% threshold | 2-3% threshold |
+| Trending market | Follow trend | Wide range, less rebalance | Wide bins |
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Real Data" icon="database" href="/tutorials/intermediate/working-with-real-data">
+    Test with historical swap data
+  </Card>
+  <Card title="Vectorized Strategies" icon="bolt" href="/tutorials/advanced/vectorized-strategies">
+    Build custom strategy logic
+  </Card>
+</CardGroup>

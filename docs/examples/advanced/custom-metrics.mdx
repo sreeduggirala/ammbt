@@ -1,0 +1,64 @@
+---
+title: "Custom Metrics"
+description: "Implement custom performance metrics"
+---
+
+# Custom Metrics
+
+Add your own metrics to backtest results.
+
+```python
+import ammbt as amm
+import numpy as np
+
+# Run backtest
+swaps = amm.generate_swaps(n_swaps=10000, seed=42)
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-200, -400],
+    'tick_upper': [200, 400],
+    'rebalance_threshold': [0.0, 0.05],
+}
+
+result = bt.run(swaps, strategies)
+
+# Add custom metrics
+def calculate_sortino(history, swaps):
+    """Sortino ratio (downside deviation only)."""
+    prices = swaps['price'].values
+    values = history['token0_balance'] * prices + history['token1_balance']
+    returns = np.diff(values) / values[:-1]
+
+    negative_returns = returns[returns < 0]
+    if len(negative_returns) == 0:
+        return float('inf')
+
+    downside_std = np.std(negative_returns)
+    return np.mean(returns) / downside_std * np.sqrt(365)
+
+def calculate_calmar(metrics, days):
+    """Calmar ratio (return / max drawdown)."""
+    annual_return = metrics['total_return_pct'] * (365 / days)
+    if metrics['max_drawdown_pct'] == 0:
+        return float('inf')
+    return annual_return / metrics['max_drawdown_pct']
+
+# Apply to results
+days = (swaps['timestamp'].iloc[-1] - swaps['timestamp'].iloc[0]) / 86400
+
+result.metrics['calmar'] = result.metrics.apply(
+    lambda row: calculate_calmar(row, days), axis=1
+)
+
+for idx in result.metrics.index:
+    history = result.get_position_history(idx)
+    result.metrics.loc[idx, 'sortino'] = calculate_sortino(history, swaps)
+
+print(result.metrics[['tick_lower', 'tick_upper', 'sharpe', 'sortino', 'calmar']])
+```
+
+## See Also
+
+- [PnL Calculations](/concepts/metrics/pnl-calculations)

@@ -1,0 +1,82 @@
+---
+title: "UniswapV3Simulator"
+description: "Concentrated Liquidity AMM (CLMM) simulator"
+---
+
+# UniswapV3Simulator
+
+Simulates Uniswap V3 concentrated liquidity AMM behavior.
+
+## Constructor
+
+```python
+UniswapV3Simulator(
+    initial_price: float = 1.0,
+    initial_liquidity: float = 1_000_000_000,
+    fee_tier: int = 3000,
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `initial_price` | float | 1.0 | Starting price |
+| `initial_liquidity` | float | 1e9 | Pool liquidity |
+| `fee_tier` | int | 3000 | Fee in bps (500, 3000, 10000) |
+
+## Fee Tiers
+
+| Tier | Fee | Tick Spacing |
+|------|-----|--------------|
+| 500 | 0.05% | 10 |
+| 3000 | 0.30% | 60 |
+| 10000 | 1.00% | 200 |
+
+## Position Dtype
+
+```python
+V3_POSITION_DTYPE = np.dtype([
+    ('tick_lower', 'i4'),
+    ('tick_upper', 'i4'),
+    ('liquidity', 'f8'),
+    ('token0_balance', 'f8'),
+    ('token1_balance', 'f8'),
+    ('fee_growth_inside_0_last', 'f8'),
+    ('fee_growth_inside_1_last', 'f8'),
+    ('uncollected_fees_0', 'f8'),
+    ('uncollected_fees_1', 'f8'),
+    ('is_active', '?'),
+    ('is_in_range', '?'),
+    ('gas_spent', 'f8'),
+    ('last_rebalance_idx', 'i4'),
+    ('num_rebalances', 'i4'),
+])
+```
+
+## Strategy Dtype
+
+```python
+V3_STRATEGY_DTYPE = np.dtype([
+    ('initial_capital', 'f8'),
+    ('tick_lower', 'i4'),
+    ('tick_upper', 'i4'),
+    ('rebalance_threshold', 'f8'),
+    ('rebalance_frequency', 'i4'),
+])
+```
+
+## Usage
+
+```python
+bt = LPBacktester(
+    amm_type='v3',
+    initial_price=2000.0,
+    fee_tier=3000,
+)
+```
+
+## See Also
+
+- [CLMM Concepts](/concepts/amm-fundamentals/clmm-uniswap-v3)
+- [V3 Tutorial](/tutorials/intermediate/uniswap-v3-backtesting)

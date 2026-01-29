@@ -1,0 +1,68 @@
+---
+title: "Capital Efficiency"
+description: "Capital efficiency calculation functions"
+---
+
+# Capital Efficiency
+
+Functions for calculating capital efficiency metrics.
+
+## Functions
+
+### calculate_v3_efficiency
+
+Calculate V3 capital efficiency factor.
+
+```python
+def calculate_v3_efficiency(
+    tick_lower: int,
+    tick_upper: int,
+    current_tick: int,
+) -> float
+```
+
+Returns efficiency multiplier (1.0 for V2-equivalent full range).
+
+### calculate_realized_efficiency
+
+Calculate actual efficiency over backtest period.
+
+```python
+def calculate_realized_efficiency(
+    result: BacktestResult,
+    swaps: pd.DataFrame,
+    strategy_idx: int = 0,
+) -> Dict[str, float]
+```
+
+Returns:
+- `fee_yield`: Fees / capital
+- `annual_fee_yield`: Annualized fee yield
+- `time_in_range`: Utilization percentage
+
+### estimate_dlmm_fee_apr
+
+Estimate DLMM fee APR.
+
+```python
+def estimate_dlmm_fee_apr(
+    volume_daily: float,
+    liquidity: float,
+    base_fee: float = 0.0025,
+    avg_variable_fee: float = 0.0005,
+) -> float
+```
+
+## Example
+
+```python
+from ammbt.utils import calculate_v3_efficiency
+
+# 10% range efficiency
+efficiency = calculate_v3_efficiency(-500, 500, 0)
+print(f"Efficiency: {efficiency:.1f}x")  # ~10x
+```
+
+## See Also
+
+- [Capital Efficiency Concepts](/concepts/metrics/capital-efficiency)

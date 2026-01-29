@@ -1,0 +1,300 @@
+---
+title: "CPAMM - Uniswap V2"
+description: "Understanding the Constant Product Automated Market Maker"
+---
+
+# CPAMM - Uniswap V2
+
+The **Constant Product Automated Market Maker (CPAMM)** is the simplest and most widely adopted AMM design, pioneered by Uniswap V2. This page explains its mechanics in detail.
+
+## The Constant Product Formula
+
+The core invariant is:
+
+$$x \cdot y = k$$
+
+Where:
+- $x$ = reserve of token0
+- $y$ = reserve of token1
+- $k$ = constant (the "invariant")
+
+Every swap must maintain this constant (before fees).
+
+## Price Determination
+
+The **marginal price** at any point is:
+
+$$P = \frac{y}{x}$$
+
+This represents how many token1s you get per token0 at the current reserves.
+
+```python
+# Example
+reserve_eth = 1000      # token0
+reserve_usdc = 2000000  # token1
+
+price = reserve_usdc / reserve_eth  # = 2000 USDC/ETH
+```
+
+## How Swaps Work
+
+### Exact Input Swap
+
+Given an input amount, calculate the output:
+
+```python
+def get_amount_out(amount_in, reserve_in, reserve_out, fee=0.003):
+    """Calculate output amount for exact input."""
+    amount_in_with_fee = amount_in * (1 - fee)
+    numerator = amount_in_with_fee * reserve_out
+    denominator = reserve_in + amount_in_with_fee
+    return numerator / denominator
+```
+
+Derivation:
+1. New reserve_in: $x' = x + \text{amount\_in} \cdot (1 - \text{fee})$
+2. Maintain invariant: $x' \cdot y' = k$
+3. Solve for output: $\text{amount\_out} = y - y' = y - \frac{k}{x'}$
+
+### Exact Output Swap
+
+Given a desired output, calculate required input:
+
+```python
+def get_amount_in(amount_out, reserve_in, reserve_out, fee=0.003):
+    """Calculate input amount for exact output."""
+    numerator = reserve_in * amount_out
+    denominator = (reserve_out - amount_out) * (1 - fee)
+    return numerator / denominator
+```
+
+## Liquidity Provision
+
+### Adding Liquidity
+
+LPs must deposit tokens in the current ratio:
+
+```python
+def add_liquidity(amount_a, reserve_a, reserve_b, total_lp_supply):
+    """Calculate liquidity tokens received."""
+    # Must add proportional amount_b
+    amount_b = amount_a * reserve_b / reserve_a
+
+    # LP tokens received (proportional to contribution)
+    if total_lp_supply == 0:
+        lp_tokens = sqrt(amount_a * amount_b)
+    else:
+        lp_tokens = min(
+            amount_a * total_lp_supply / reserve_a,
+            amount_b * total_lp_supply / reserve_b
+        )
+
+    return lp_tokens, amount_b
+```
+
+### Removing Liquidity
+
+LPs burn LP tokens to withdraw proportional reserves:
+
+```python
+def remove_liquidity(lp_tokens, reserve_a, reserve_b, total_lp_supply):
+    """Calculate tokens received for LP tokens."""
+    share = lp_tokens / total_lp_supply
+
+    amount_a = reserve_a * share
+    amount_b = reserve_b * share
+
+    return amount_a, amount_b
+```
+
+## Fee Mechanism
+
+Uniswap V2 charges 0.3% on every swap:
+
+1. Fee is taken from input amount
+2. Fee stays in the pool (increases $k$)
+3. Fee compounds automatically for LPs
+
+```python
+# Before fee: k = x * y = 2,000,000,000
+# After swap with fee: k_new > k
+
+# Example: 100 ETH swap (with 0.3% fee)
+fee = 100 * 0.003  # = 0.3 ETH stays in pool
+# New k is slightly higher
+```
+
+### Fee Accumulation
+
+Over time, $k$ grows as fees accumulate:
+
+```python
+# LP share is based on LP tokens, not k
+# As k grows, each LP token represents more value
+
+initial_k = 2_000_000_000
+final_k = 2_100_000_000  # After many swaps
+
+# If you have 1% of LP tokens
+# Your value grew proportionally to sqrt(final_k/initial_k)
+value_growth = sqrt(final_k / initial_k) - 1  # ~2.4%
+```
+
+## Impermanent Loss in V2
+
+### The Formula
+
+For a price change from $P_0$ to $P_1$:
+
+$$\text{IL} = \frac{2\sqrt{r}}{1+r} - 1$$
+
+Where $r = P_1 / P_0$ (price ratio)
+
+### IL Table
+
+| Price Change | IL |
+|--------------|-----|
+| 0.5x (50% drop) | -5.7% |
+| 0.75x | -1.3% |
+| 1.0x (no change) | 0.0% |
+| 1.25x | -0.6% |
+| 1.5x | -2.0% |
+| 2.0x | -5.7% |
+| 3.0x | -13.4% |
+| 5.0x | -25.5% |
+
+<Note>
+IL is symmetric: 2x up and 0.5x down have the same IL magnitude.
+</Note>
+
+### Visualizing IL
+
+```python
+import numpy as np
+import plotly.express as px
+
+price_ratios = np.linspace(0.1, 5, 100)
+il = 2 * np.sqrt(price_ratios) / (1 + price_ratios) - 1
+
+fig = px.line(
+    x=price_ratios,
+    y=il * 100,
+    labels={'x': 'Price Ratio (P1/P0)', 'y': 'Impermanent Loss (%)'},
+    title='Impermanent Loss vs Price Change'
+)
+fig.show()
+```
+
+## V2 in ammBT
+
+### Creating a V2 Backtester
+
+```python
+import ammbt as amm
+
+bt = amm.LPBacktester(
+    amm_type='v2',
+    initial_reserve0=1_000_000,  # Pool reserves
+    initial_reserve1=2_000_000_000,
+    fee_rate=0.003,  # 0.3%
+)
+```
+
+### V2 Strategy Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `initial_capital` | float | Capital to provide |
+| `rebalance_threshold` | float | Price deviation trigger (0 = never) |
+| `rebalance_frequency` | int | Min swaps between rebalances (0 = disabled) |
+
+### Example Backtest
+
+```python
+swaps = amm.generate_swaps(n_swaps=10000, seed=42)
+
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+    'rebalance_frequency': [0, 200],
+}
+
+result = bt.run(swaps, strategies)
+print(result.summary())
+```
+
+## V2 Position Structure
+
+In ammBT, V2 positions track:
+
+```python
+V2_POSITION_DTYPE = np.dtype([
+    ('liquidity', 'f8'),           # LP tokens owned
+    ('token0_balance', 'f8'),      # Current token0
+    ('token1_balance', 'f8'),      # Current token1
+    ('uncollected_fees_0', 'f8'),  # Accumulated fees
+    ('uncollected_fees_1', 'f8'),
+    ('gas_spent', 'f8'),           # Cumulative gas
+    ('is_active', '?'),            # Position status
+    ('last_rebalance_idx', 'i4'),  # Last rebalance swap
+    ('num_rebalances', 'i4'),      # Rebalance count
+])
+```
+
+## Rebalancing in V2
+
+Since V2 is full-range, "rebalancing" means:
+
+1. Remove all liquidity
+2. Swap to achieve 50/50 value split
+3. Re-add liquidity
+
+This crystallizes any gains/losses and resets IL.
+
+```python
+# Rebalance when price moves 10%
+strategies = {
+    'initial_capital': [25000],
+    'rebalance_threshold': [0.10],
+    'rebalance_frequency': [0],
+}
+```
+
+## V2 vs V3 Comparison
+
+| Aspect | V2 (CPAMM) | V3 (CLMM) |
+|--------|------------|-----------|
+| Liquidity range | 0 to ∞ | Custom ranges |
+| Capital efficiency | 1x | Up to 4000x |
+| Complexity | Simple | Complex |
+| Management | Passive possible | Active recommended |
+| Fee compounding | Automatic | Manual |
+
+## When to Use V2
+
+<Check>
+**Passive LPing**: Don't want to actively manage
+</Check>
+
+<Check>
+**Volatile pairs**: Full range protects from going out-of-range
+</Check>
+
+<Check>
+**Lower gas**: Simpler operations = cheaper
+</Check>
+
+<Check>
+**Learning**: Easier to understand dynamics
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="CLMM (V3)" icon="arrows-left-right-to-line" href="/concepts/amm-fundamentals/clmm-uniswap-v3">
+    Learn about concentrated liquidity
+  </Card>
+  <Card title="V2 Backtesting Tutorial" icon="play" href="/tutorials/beginner/your-first-v2-backtest">
+    Hands-on V2 backtesting
+  </Card>
+</CardGroup>

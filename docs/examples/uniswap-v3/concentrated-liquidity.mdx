@@ -1,0 +1,196 @@
+---
+title: "Concentrated Liquidity"
+description: "Understanding V3 concentrated liquidity through backtesting"
+---
+
+# Concentrated Liquidity Example
+
+This example demonstrates how concentrated liquidity works in Uniswap V3 and how to backtest different range widths.
+
+## Overview
+
+In V3, you concentrate liquidity in a specific price range. Narrower ranges:
+- Earn more fees per dollar when in range
+- Go out of range more often
+- Face higher impermanent loss
+
+## Setup
+
+```python
+import ammbt as amm
+from ammbt.utils import generate_tick_ranges, create_v3_strategy_grid
+import pandas as pd
+import plotly.express as px
+
+# Generate synthetic data
+swaps = amm.generate_swaps(
+    n_swaps=20000,
+    initial_price=2000.0,
+    price_volatility=0.025,
+    seed=42
+)
+
+print(f"Price range: {swaps['price'].min():.2f} - {swaps['price'].max():.2f}")
+```
+
+## Define Range Widths
+
+```python
+# Generate tick ranges of different widths
+# ±2%, ±5%, ±10%, ±20%, ±50%
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.02, 0.05, 0.10, 0.20, 0.50],
+    tick_spacing=60,  # 0.3% fee tier
+)
+
+print("Tick ranges:")
+for lower, upper in tick_ranges:
+    from ammbt.utils import tick_to_price
+    print(f"  [{lower}, {upper}] = [{tick_to_price(lower):.2f}, {tick_to_price(upper):.2f}]")
+```
+
+## Create Strategy Grid
+
+```python
+strategies = create_v3_strategy_grid(
+    initial_capitals=[25000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0],  # No rebalancing
+    rebalance_frequencies=[0],
+)
+
+print(f"Testing {len(strategies)} strategies")
+```
+
+## Run Backtest
+
+```python
+bt = amm.LPBacktester(
+    amm_type='v3',
+    initial_price=2000.0,
+    fee_tier=3000,
+)
+
+result = bt.run(swaps, strategies)
+```
+
+## Analyze Results
+
+```python
+# Add range width to metrics
+result.metrics['range_width'] = (
+    result.metrics['tick_upper'] - result.metrics['tick_lower']
+)
+
+# View results
+print(result.metrics[[
+    'range_width', 'net_pnl', 'total_fees_earned',
+    'impermanent_loss', 'time_in_position', 'sharpe'
+]])
+```
+
+## Visualize
+
+### Fees vs Range Width
+
+```python
+fig = px.scatter(
+    result.metrics,
+    x='range_width',
+    y='total_fees_earned',
+    size='time_in_position',
+    title='Fee Earnings vs Range Width',
+    labels={
+        'range_width': 'Range Width (ticks)',
+        'total_fees_earned': 'Fees Earned ($)',
+        'time_in_position': 'Time in Range (%)'
+    }
+)
+fig.show()
+```
+
+### Net PnL vs Range Width
+
+```python
+fig = px.bar(
+    result.metrics,
+    x='range_width',
+    y='net_pnl',
+    color='time_in_position',
+    title='Net PnL by Range Width',
+)
+fig.show()
+```
+
+## Key Insights
+
+```python
+# Summarize findings
+print("\nKey Insights:")
+print("=" * 50)
+
+for _, row in result.metrics.iterrows():
+    width = row['range_width']
+    print(f"\nRange width: {width} ticks")
+    print(f"  Time in range: {row['time_in_position']:.1f}%")
+    print(f"  Fees earned: ${row['total_fees_earned']:.2f}")
+    print(f"  Impermanent loss: ${row['impermanent_loss']:.2f}")
+    print(f"  Net PnL: ${row['net_pnl']:.2f}")
+```
+
+## Conclusions
+
+1. **Narrower ranges** earn more fees when in range
+2. **Wider ranges** stay in range longer
+3. **Optimal width** depends on expected volatility
+4. For this volatility (~2.5% daily), ~10% range balanced fees and coverage
+
+## Complete Code
+
+```python
+import ammbt as amm
+from ammbt.utils import generate_tick_ranges, create_v3_strategy_grid
+import pandas as pd
+
+# Generate data
+swaps = amm.generate_swaps(
+    n_swaps=20000,
+    initial_price=2000.0,
+    price_volatility=0.025,
+    seed=42
+)
+
+# Create strategies
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.02, 0.05, 0.10, 0.20, 0.50],
+)
+
+strategies = create_v3_strategy_grid(
+    initial_capitals=[25000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0],
+)
+
+# Run backtest
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000, initial_price=2000.0)
+result = bt.run(swaps, strategies)
+
+# Analyze
+result.metrics['range_width'] = (
+    result.metrics['tick_upper'] - result.metrics['tick_lower']
+)
+print(result.metrics.sort_values('net_pnl', ascending=False))
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Range Strategies" href="/examples/uniswap-v3/range-strategies">
+    Compare different range approaches
+  </Card>
+  <Card title="V3 Tutorial" href="/tutorials/intermediate/uniswap-v3-backtesting">
+    Complete V3 guide
+  </Card>
+</CardGroup>

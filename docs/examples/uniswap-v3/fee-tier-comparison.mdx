@@ -1,0 +1,58 @@
+---
+title: "V3 Fee Tier Comparison"
+description: "Compare 0.05%, 0.3%, and 1% fee tiers"
+---
+
+# V3 Fee Tier Comparison
+
+Compare performance across different fee tiers.
+
+```python
+import ammbt as amm
+import pandas as pd
+
+# Generate data
+swaps = amm.generate_swaps(
+    n_swaps=20000,
+    initial_price=2000.0,
+    price_volatility=0.03,
+    seed=42
+)
+
+# Strategy (same for all tiers)
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-300],
+    'tick_upper': [300],
+    'rebalance_threshold': [0.05],
+}
+
+# Test each fee tier
+results = {}
+for fee_tier in [500, 3000, 10000]:
+    bt = amm.LPBacktester(
+        amm_type='v3',
+        fee_tier=fee_tier,
+        initial_price=2000.0
+    )
+    result = bt.run(swaps, strategies)
+    results[f'{fee_tier/100:.2f}%'] = result.metrics.iloc[0]
+
+# Compare
+comparison = pd.DataFrame(results).T
+print(comparison[[
+    'net_pnl', 'total_fees_earned', 'sharpe', 'time_in_position'
+]])
+```
+
+## Fee Tier Selection Guide
+
+| Pair Type | Recommended |
+|-----------|-------------|
+| Stable-stable | 0.05% |
+| Major pairs | 0.30% |
+| Exotic | 1.00% |
+
+## See Also
+
+- [V3 Tutorial](/tutorials/intermediate/uniswap-v3-backtesting)

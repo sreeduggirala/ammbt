@@ -1,0 +1,62 @@
+---
+title: "Metrics Heatmaps"
+description: "Create parameter sensitivity heatmaps"
+---
+
+# Metrics Heatmaps
+
+## Basic Heatmap
+
+```python
+import ammbt as amm
+
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='tick_upper',
+    y_param='tick_lower',
+    metric='sharpe'
+)
+fig.show()
+```
+
+## Different Metrics
+
+```python
+for metric in ['net_pnl', 'sharpe', 'max_drawdown_pct']:
+    fig = amm.plot_metrics_heatmap(
+        result,
+        x_param='rebalance_threshold',
+        y_param='initial_capital',
+        metric=metric
+    )
+    fig.update_layout(title=f'{metric} Heatmap')
+    fig.show()
+```
+
+## Custom Color Scale
+
+```python
+fig = amm.plot_metrics_heatmap(result, 'tick_upper', 'tick_lower', 'sharpe')
+fig.update_traces(colorscale='RdYlGn')  # Red-Yellow-Green
+fig.show()
+```
+
+## Slicing Multi-Parameter Results
+
+```python
+# Filter to single capital
+subset = result.metrics[result.metrics['initial_capital'] == 25000]
+
+import plotly.express as px
+pivot = subset.pivot_table(
+    values='sharpe',
+    index='tick_lower',
+    columns='tick_upper',
+)
+fig = px.imshow(pivot, title='Sharpe (Capital=$25K)')
+fig.show()
+```
+
+## See Also
+
+- [plot_metrics_heatmap API](/api-reference/plotting/plot-metrics-heatmap)

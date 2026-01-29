@@ -1,0 +1,315 @@
+---
+title: "CLMM - Uniswap V3"
+description: "Understanding Concentrated Liquidity Market Makers"
+---
+
+# CLMM - Uniswap V3
+
+**Concentrated Liquidity Market Makers (CLMM)** allow liquidity providers to concentrate their capital within specific price ranges. Uniswap V3 pioneered this approach, offering dramatically improved capital efficiency.
+
+## The Key Innovation
+
+In V2, liquidity is spread across all prices (0 to ∞). In V3, LPs choose their range:
+
+```
+V2: Liquidity spread everywhere
+    |━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━|
+    0                                      ∞
+
+V3: Liquidity concentrated in range
+    |       [████████████████]             |
+    0       P_lower    P_upper             ∞
+```
+
+## Capital Efficiency
+
+By concentrating liquidity, LPs can achieve the same depth with less capital:
+
+$$\text{Efficiency} = \frac{\sqrt{P_{upper}} \cdot \sqrt{P_{lower}}}{\sqrt{P_{upper}} - \sqrt{P_{lower}}}$$
+
+**Example**: A ±10% range provides ~21x capital efficiency.
+
+| Range | Efficiency |
+|-------|------------|
+| ±1% | ~200x |
+| ±5% | ~40x |
+| ±10% | ~21x |
+| ±50% | ~5x |
+| Full range | 1x |
+
+## Ticks and Price Ranges
+
+V3 uses **ticks** to define price points. Each tick represents a 0.01% (1 basis point) price change:
+
+$$P_{tick} = 1.0001^{tick}$$
+
+### Tick to Price
+
+```python
+def tick_to_price(tick: int) -> float:
+    return 1.0001 ** tick
+
+# Examples
+tick_to_price(0)      # 1.0
+tick_to_price(1000)   # ~1.1052
+tick_to_price(-1000)  # ~0.9048
+tick_to_price(10000)  # ~2.7183 (≈ e)
+```
+
+### Price to Tick
+
+```python
+import math
+
+def price_to_tick(price: float) -> int:
+    return int(math.log(price) / math.log(1.0001))
+
+# Examples
+price_to_tick(1.0)    # 0
+price_to_tick(2.0)    # ~6932
+price_to_tick(0.5)    # ~-6932
+```
+
+## Tick Spacing
+
+Not all ticks are usable - it depends on the **fee tier**:
+
+| Fee Tier | Fee | Tick Spacing |
+|----------|-----|--------------|
+| 500 | 0.05% | 10 |
+| 3000 | 0.30% | 60 |
+| 10000 | 1.00% | 200 |
+
+LPs can only place positions at multiples of tick spacing:
+
+```python
+# For 0.3% fee tier (spacing = 60)
+valid_ticks = [..., -120, -60, 0, 60, 120, ...]
+
+# Round to valid tick
+def round_tick(tick: int, spacing: int) -> int:
+    return round(tick / spacing) * spacing
+```
+
+## Liquidity Math
+
+### The Liquidity Formula
+
+V3 uses **virtual liquidity** ($L$) which represents the depth of liquidity:
+
+$$L = \frac{\Delta y}{\Delta \sqrt{P}}$$
+
+Or equivalently:
+
+$$L = \frac{\Delta x \cdot \sqrt{P_a} \cdot \sqrt{P_b}}{\sqrt{P_b} - \sqrt{P_a}}$$
+
+### Getting Amounts from Liquidity
+
+Given liquidity $L$ and price range $[P_a, P_b]$:
+
+**When current price $P < P_a$ (below range):**
+- Position is 100% token0
+- $\text{amount}_0 = L \cdot \frac{\sqrt{P_b} - \sqrt{P_a}}{\sqrt{P_a} \cdot \sqrt{P_b}}$
+
+**When current price $P > P_b$ (above range):**
+- Position is 100% token1
+- $\text{amount}_1 = L \cdot (\sqrt{P_b} - \sqrt{P_a})$
+
+**When $P_a \leq P \leq P_b$ (in range):**
+- Position has both tokens
+- $\text{amount}_0 = L \cdot \frac{\sqrt{P_b} - \sqrt{P}}{\sqrt{P} \cdot \sqrt{P_b}}$
+- $\text{amount}_1 = L \cdot (\sqrt{P} - \sqrt{P_a})$
+
+## Fee Mechanics
+
+### Fee Accumulation
+
+V3 tracks fees using **fee growth** accumulators:
+
+- `feeGrowthGlobal0X128`: Total fees per unit liquidity (token0)
+- `feeGrowthGlobal1X128`: Total fees per unit liquidity (token1)
+
+When a swap occurs in a tick range, fees are distributed to all liquidity in that range.
+
+### Collecting Fees
+
+Unlike V2, V3 fees don't auto-compound. LPs must manually collect:
+
+```python
+# Fees earned by position
+fees_0 = liquidity * (feeGrowthInside0 - feeGrowthInside0_last)
+fees_1 = liquidity * (feeGrowthInside1 - feeGrowthInside1_last)
+```
+
+## In-Range vs Out-of-Range
+
+A position only earns fees when the current price is within its range:
+
+```python
+is_in_range = tick_lower <= current_tick < tick_upper
+```
+
+**In-Range:**
+- Earns trading fees
+- Subject to impermanent loss
+- Has exposure to both tokens
+
+**Out-of-Range (Below):**
+- Earns no fees
+- 100% in token0
+- No IL accrual (but IL locked in)
+
+**Out-of-Range (Above):**
+- Earns no fees
+- 100% in token1
+- No IL accrual (but IL locked in)
+
+## Impermanent Loss in V3
+
+IL is **amplified** by concentration:
+
+$$\text{IL}_{V3} \approx \text{IL}_{V2} \times \text{Concentration Factor}$$
+
+For a range $[P_a, P_b]$:
+
+$$\text{Concentration} = \frac{\sqrt{P_b} + \sqrt{P_a}}{\sqrt{P_b} - \sqrt{P_a}}$$
+
+**Example**: 10% range with 2x price move:
+- V2 IL: -5.7%
+- V3 IL: ~-5.7% × 21 = significantly higher if price exits range
+
+## V3 in ammBT
+
+### Creating a V3 Backtester
+
+```python
+import ammbt as amm
+
+bt = amm.LPBacktester(
+    amm_type='v3',
+    initial_price=2000.0,
+    initial_liquidity=1_000_000_000,
+    fee_tier=3000,  # 0.3%
+)
+```
+
+### V3 Strategy Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `initial_capital` | float | Capital to provide |
+| `tick_lower` | int | Lower tick bound |
+| `tick_upper` | int | Upper tick bound |
+| `rebalance_threshold` | float | Price deviation trigger |
+| `rebalance_frequency` | int | Min swaps between rebalances |
+
+### Example Backtest
+
+```python
+from ammbt.utils import generate_tick_ranges
+
+# Generate tick ranges (±5%, ±10%, ±20%)
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.05, 0.10, 0.20],
+)
+
+strategies = {
+    'initial_capital': [10000, 25000],
+    'tick_lower': [r[0] for r in tick_ranges],
+    'tick_upper': [r[1] for r in tick_ranges],
+    'rebalance_threshold': [0.0, 0.05],
+}
+
+result = bt.run(swaps, strategies)
+```
+
+## V3 Position Structure
+
+```python
+V3_POSITION_DTYPE = np.dtype([
+    ('tick_lower', 'i4'),
+    ('tick_upper', 'i4'),
+    ('liquidity', 'f8'),
+    ('token0_balance', 'f8'),
+    ('token1_balance', 'f8'),
+    ('fee_growth_inside_0_last', 'f8'),
+    ('fee_growth_inside_1_last', 'f8'),
+    ('uncollected_fees_0', 'f8'),
+    ('uncollected_fees_1', 'f8'),
+    ('is_active', '?'),
+    ('is_in_range', '?'),
+    ('gas_spent', 'f8'),
+    ('last_rebalance_idx', 'i4'),
+    ('num_rebalances', 'i4'),
+])
+```
+
+## Rebalancing Strategies
+
+### When to Rebalance
+
+1. **Out of Range**: Most common - recenter when price exits
+2. **Threshold**: Recenter when price moves by X%
+3. **Time-Based**: Recenter periodically
+
+### Rebalancing Process
+
+1. Burn existing position
+2. Collect accumulated fees
+3. Calculate new tick bounds (centered on current price)
+4. Mint new position with updated range
+
+```python
+# Automatic recentering in ammBT
+strategies = {
+    'tick_lower': [-200],  # Initial range: -200 to +200
+    'tick_upper': [200],
+    'rebalance_threshold': [0.10],  # Recenter on 10% move
+}
+
+# After rebalance, new range is still 400 ticks wide
+# but centered on current tick
+```
+
+## Fee Tier Selection
+
+| Pair Type | Recommended Tier | Reason |
+|-----------|-----------------|--------|
+| Stable-Stable | 0.01% or 0.05% | Low volatility |
+| Stable-Major | 0.05% or 0.30% | Medium volatility |
+| Major-Major | 0.30% | Standard volatility |
+| Exotic | 1.00% | High volatility |
+
+## Best Practices
+
+<Check>
+**Wider ranges** for volatile pairs
+</Check>
+
+<Check>
+**Narrower ranges** for stable pairs (higher efficiency)
+</Check>
+
+<Check>
+**Lower fee tiers** for high-volume pairs
+</Check>
+
+<Check>
+**Active management** for concentrated positions
+</Check>
+
+<Check>
+**Monitor time in range** metric
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="DLMM Meteora" icon="grid-2" href="/concepts/amm-fundamentals/dlmm-meteora">
+    Learn about bin-based liquidity
+  </Card>
+  <Card title="V3 Backtesting Tutorial" icon="play" href="/tutorials/intermediate/uniswap-v3-backtesting">
+    Hands-on V3 backtesting
+  </Card>
+</CardGroup>

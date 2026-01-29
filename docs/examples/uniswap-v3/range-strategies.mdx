@@ -1,0 +1,53 @@
+---
+title: "V3 Range Strategies"
+description: "Compare narrow vs wide range strategies"
+---
+
+# V3 Range Strategies
+
+Compare different range width strategies for V3.
+
+```python
+import ammbt as amm
+from ammbt.utils import generate_tick_ranges, create_v3_strategy_grid
+
+# Generate data
+swaps = amm.generate_swaps(
+    n_swaps=15000,
+    initial_price=2000.0,
+    price_volatility=0.025,
+    seed=42
+)
+
+# Create tick ranges from narrow to wide
+tick_ranges = generate_tick_ranges(
+    current_price=2000.0,
+    range_widths_pct=[0.02, 0.05, 0.10, 0.20, 0.50],
+)
+
+# Create strategy grid
+strategies = create_v3_strategy_grid(
+    initial_capitals=[25000],
+    tick_ranges=tick_ranges,
+    rebalance_thresholds=[0.0, 0.05],
+)
+
+# Run backtest
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000, initial_price=2000.0)
+result = bt.run(swaps, strategies)
+
+# Add range width for analysis
+result.metrics['range_width'] = (
+    result.metrics['tick_upper'] - result.metrics['tick_lower']
+)
+
+# Compare
+print(result.metrics[[
+    'range_width', 'rebalance_threshold', 'net_pnl',
+    'time_in_position', 'sharpe'
+]].sort_values('sharpe', ascending=False))
+```
+
+## See Also
+
+- [Concentrated Liquidity](/examples/uniswap-v3/concentrated-liquidity)

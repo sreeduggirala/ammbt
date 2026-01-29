@@ -1,0 +1,51 @@
+---
+title: "Basic DLMM"
+description: "Introduction to Meteora DLMM backtesting"
+---
+
+# Basic DLMM
+
+A simple Meteora DLMM backtest example.
+
+```python
+import ammbt as amm
+
+# Generate data
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    initial_price=1.0,
+    price_volatility=0.025,
+    seed=42
+)
+
+# Define strategies
+strategies = {
+    'initial_capital': [10000, 25000],
+    'bin_lower': [-40, -80],
+    'bin_upper': [40, 80],
+    'liquidity_shape': [0, 1],  # Spot, Curve
+    'rebalance_threshold': [0.0, 0.05],
+}
+
+# Create backtester
+bt = amm.LPBacktester(
+    amm_type='dlmm',
+    initial_price=1.0,
+    bin_step=25,
+)
+
+# Run
+result = bt.run(swaps, strategies)
+
+# View results
+print(result.summary())
+
+# Visualize
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+## See Also
+
+- [DLMM Tutorial](/tutorials/intermediate/meteora-dlmm-backtesting)
+- [Liquidity Shapes](/examples/meteora-dlmm/liquidity-shapes)

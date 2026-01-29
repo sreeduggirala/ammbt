@@ -1,0 +1,325 @@
+---
+title: "Vectorized Design"
+description: "How ammBT achieves high-performance backtesting through vectorization"
+---
+
+# Vectorized Design
+
+ammBT's core architecture uses **vectorized computation** to achieve high-performance backtesting. Instead of simulating strategies sequentially, it processes all strategies simultaneously using NumPy arrays.
+
+## The Problem with Sequential Simulation
+
+Traditional backtesting loops through strategies one at a time:
+
+```python
+# Sequential approach: O(S × N) complexity
+results = []
+for strategy in strategies:        # S strategies
+    position = initialize(strategy)
+    for swap in swaps:             # N swaps
+        position = process(swap, position)
+    results.append(calculate_metrics(position))
+```
+
+For 1000 strategies and 100,000 swaps, this requires **100 million** iterations.
+
+## ammBT's Vectorized Approach
+
+ammBT processes all strategies at once:
+
+```python
+# Vectorized approach: O(N) complexity
+positions = initialize_all(strategies)  # (N+1, S) array
+for swap in swaps:                       # N swaps only
+    positions = process_all(swap, positions)  # Vectorized
+metrics = calculate_metrics_all(positions)
+```
+
+For the same workload, only **100,000** iterations are needed.
+
+## The Position State Array
+
+The core data structure is a 2D NumPy structured array:
+
+```python
+# Shape: (n_swaps + 1, n_strategies)
+# Each element is a structured array with position fields
+
+positions = np.zeros(
+    (n_swaps + 1, n_strategies),
+    dtype=position_dtype
+)
+```
+
+### Memory Layout
+
+```
+               Strategy 0    Strategy 1    Strategy 2    ...
+             ┌────────────┬────────────┬────────────┬────
+Swap 0       │  Position  │  Position  │  Position  │ ...
+             ├────────────┼────────────┼────────────┼────
+Swap 1       │  Position  │  Position  │  Position  │ ...
+             ├────────────┼────────────┼────────────┼────
+Swap 2       │  Position  │  Position  │  Position  │ ...
+             ├────────────┼────────────┼────────────┼────
+   ...       │    ...     │    ...     │    ...     │ ...
+             └────────────┴────────────┴────────────┴────
+```
+
+### Position Dtype Example (V3)
+
+```python
+V3_POSITION_DTYPE = np.dtype([
+    ('tick_lower', 'i4'),           # 4 bytes
+    ('tick_upper', 'i4'),           # 4 bytes
+    ('liquidity', 'f8'),            # 8 bytes
+    ('token0_balance', 'f8'),       # 8 bytes
+    ('token1_balance', 'f8'),       # 8 bytes
+    ('fee_growth_inside_0_last', 'f8'),  # 8 bytes
+    ('fee_growth_inside_1_last', 'f8'),  # 8 bytes
+    ('uncollected_fees_0', 'f8'),   # 8 bytes
+    ('uncollected_fees_1', 'f8'),   # 8 bytes
+    ('is_active', '?'),             # 1 byte
+    ('is_in_range', '?'),           # 1 byte
+    ('gas_spent', 'f8'),            # 8 bytes
+    ('last_rebalance_idx', 'i4'),   # 4 bytes
+    ('num_rebalances', 'i4'),       # 4 bytes
+])
+# Total: ~80 bytes per position per swap
+```
+
+## Vectorized Operations
+
+### Processing a Swap
+
+When a swap arrives, all strategies are updated simultaneously:
+
+```python
+def process_swap_vectorized(positions, t, swap, strategy_params):
+    """Process one swap for all strategies at once."""
+
+    # Get current state for all strategies (1D array of structs)
+    current = positions[t]
+
+    # Vectorized price check (boolean array)
+    price = swap['price']
+    in_range = (
+        (current['tick_lower'] <= price_to_tick(price)) &
+        (price_to_tick(price) < current['tick_upper'])
+    )
+
+    # Vectorized fee calculation
+    # Only active, in-range positions earn fees
+    active_in_range = current['is_active'] & in_range
+    fee_share = calculate_fees_vectorized(
+        liquidity=current['liquidity'],
+        active_mask=active_in_range,
+        swap_volume=swap['volume'],
+    )
+
+    # Update all positions at once
+    new_state = current.copy()
+    new_state['uncollected_fees_0'] += fee_share['token0']
+    new_state['uncollected_fees_1'] += fee_share['token1']
+    new_state['is_in_range'] = in_range
+
+    # Check rebalance conditions (vectorized)
+    should_rebalance = check_rebalance_vectorized(
+        current, strategy_params, t, price
+    )
+
+    # Apply rebalances where needed
+    new_state = np.where(
+        should_rebalance[:, np.newaxis],
+        perform_rebalance_vectorized(current, price),
+        new_state
+    )
+
+    # Store new state
+    positions[t + 1] = new_state
+```
+
+### Boolean Masking
+
+Vectorized conditions avoid branching:
+
+```python
+# Bad: Python loop with conditions
+for i in range(n_strategies):
+    if positions[i]['is_active'] and positions[i]['is_in_range']:
+        positions[i]['fees'] += fee_share
+
+# Good: Vectorized with boolean mask
+mask = positions['is_active'] & positions['is_in_range']
+positions['fees'][mask] += fee_share[mask]
+```
+
+### np.where for Conditional Updates
+
+```python
+# Update values conditionally
+positions['liquidity'] = np.where(
+    should_rebalance,           # Condition (boolean array)
+    new_liquidity,              # Value if True
+    positions['liquidity']      # Value if False
+)
+```
+
+## Strategy Parameter Grid
+
+Strategies are also vectorized:
+
+```python
+# Input: dict of parameter lists
+strategies = {
+    'initial_capital': [10000, 25000],
+    'tick_lower': [-200, -400],
+    'tick_upper': [200, 400],
+}
+
+# Expanded to structured array (Cartesian product)
+strategy_params = np.array([
+    (10000, -200, 200),
+    (10000, -200, 400),
+    (10000, -400, 200),
+    (10000, -400, 400),
+    (25000, -200, 200),
+    # ... etc
+], dtype=strategy_dtype)
+```
+
+## Performance Characteristics
+
+### Time Complexity
+
+| Approach | Complexity | 1000 strategies, 100K swaps |
+|----------|-----------|----------------------------|
+| Sequential | O(S × N) | ~100M operations |
+| Vectorized | O(N) | ~100K operations |
+| Speedup | S× | ~1000× |
+
+### Memory Complexity
+
+```python
+# Memory = positions + strategy_params + swaps
+memory_bytes = (
+    (n_swaps + 1) * n_strategies * position_size +
+    n_strategies * strategy_param_size +
+    n_swaps * swap_size
+)
+```
+
+### Benchmarks
+
+```python
+import time
+import ammbt as amm
+
+def benchmark(n_swaps, n_strategies):
+    swaps = amm.generate_swaps(n_swaps=n_swaps, seed=42)
+    strategies = {
+        'initial_capital': [25000] * n_strategies,
+        'tick_lower': [-200] * n_strategies,
+        'tick_upper': [200] * n_strategies,
+    }
+
+    bt = amm.LPBacktester(amm_type='v3')
+
+    start = time.time()
+    result = bt.run(swaps, strategies)
+    elapsed = time.time() - start
+
+    return elapsed
+
+# Results (typical)
+# n_swaps=10000, n_strategies=100:   0.15s
+# n_swaps=10000, n_strategies=1000:  0.35s
+# n_swaps=10000, n_strategies=10000: 2.50s
+# n_swaps=100000, n_strategies=1000: 3.20s
+```
+
+## Memory Optimization
+
+### Pre-allocation
+
+Arrays are allocated once upfront:
+
+```python
+# All memory allocated at start
+positions = np.zeros((n_swaps + 1, n_strategies), dtype=dtype)
+
+# No dynamic allocation during simulation
+for t in range(n_swaps):
+    # Only modifies existing array
+    positions[t + 1] = update(positions[t])
+```
+
+### In-Place Operations
+
+Where possible, updates are in-place:
+
+```python
+# Copy-on-write avoided
+positions[t + 1]['uncollected_fees_0'] += fee_share
+# vs
+# positions[t + 1] = positions[t + 1].copy()
+# positions[t + 1]['uncollected_fees_0'] += fee_share
+```
+
+### Dtype Selection
+
+Smaller dtypes when precision allows:
+
+```python
+# Use int32 instead of int64 for ticks
+('tick_lower', 'i4'),  # 4 bytes, range: -2^31 to 2^31
+# Sufficient for tick range [-887272, 887272]
+
+# Use bool instead of int for flags
+('is_active', '?'),    # 1 byte instead of 8
+```
+
+## Design Trade-offs
+
+### Advantages
+
+<Check>
+**Linear time complexity** regardless of strategy count
+</Check>
+
+<Check>
+**Cache-friendly** memory access patterns
+</Check>
+
+<Check>
+**SIMD optimization** via NumPy
+</Check>
+
+<Check>
+**Numba compatible** for further acceleration
+</Check>
+
+### Limitations
+
+<Warning>
+**Memory proportional** to strategies × swaps
+</Warning>
+
+<Warning>
+**All strategies same structure** (same dtype)
+</Warning>
+
+<Warning>
+**Complex branching harder** to vectorize
+</Warning>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Numba Compilation" icon="microchip" href="/concepts/architecture/numba-compilation">
+    JIT compilation for performance
+  </Card>
+  <Card title="Position State Tracking" icon="database" href="/concepts/architecture/position-state-tracking">
+    How positions are managed
+  </Card>
+</CardGroup>

@@ -1,0 +1,93 @@
+---
+title: "Testing"
+description: "Testing guidelines for ammBT"
+---
+
+# Testing
+
+## Running Tests
+
+```bash
+# All tests
+pytest tests/
+
+# Verbose
+pytest tests/ -v
+
+# Specific test
+pytest tests/test_backtester.py::test_v3_backtest
+
+# With coverage
+pytest --cov=ammbt --cov-report=html tests/
+```
+
+## Test Structure
+
+```
+tests/
+├── test_backtester.py      # Core backtester tests
+├── test_amms/
+│   ├── test_v2.py
+│   ├── test_v3.py
+│   └── test_dlmm.py
+├── test_data/
+│   └── test_synthetic.py
+├── test_plotting/
+│   └── test_plots.py
+└── test_utils/
+    └── test_math.py
+```
+
+## Writing Tests
+
+### Basic Test
+
+```python
+def test_generate_swaps():
+    swaps = generate_swaps(n_swaps=100, seed=42)
+
+    assert len(swaps) == 100
+    assert 'price' in swaps.columns
+    assert swaps['price'].gt(0).all()
+```
+
+### Parametrized Test
+
+```python
+@pytest.mark.parametrize("amm_type", ['v2', 'v3', 'dlmm'])
+def test_backtest_amm_types(amm_type, sample_swaps):
+    bt = LPBacktester(amm_type=amm_type)
+    result = bt.run(sample_swaps, {'initial_capital': [10000]})
+
+    assert len(result.metrics) == 1
+    assert 'net_pnl' in result.metrics.columns
+```
+
+### Fixtures
+
+```python
+@pytest.fixture
+def sample_swaps():
+    return generate_swaps(n_swaps=100, seed=42)
+
+@pytest.fixture
+def v3_backtester():
+    return LPBacktester(amm_type='v3', fee_tier=3000)
+```
+
+## Test Requirements
+
+- All new features need tests
+- Bug fixes should have regression tests
+- Aim for >80% coverage
+
+## CI/CD
+
+Tests run automatically on:
+- Pull requests
+- Main branch pushes
+
+Required checks:
+- pytest passes
+- Coverage meets threshold
+- Type checking passes

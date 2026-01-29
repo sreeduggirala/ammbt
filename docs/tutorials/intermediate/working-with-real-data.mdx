@@ -1,0 +1,503 @@
+---
+title: "Working with Real Data"
+description: "Use historical swap data from Uniswap, Meteora, and other sources"
+---
+
+# Working with Real Data
+
+While synthetic data is great for testing ideas, real historical swap data provides ground truth for strategy validation. This tutorial covers loading and using real data from various sources.
+
+## Data Requirements
+
+ammBT expects swap data with these columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `amount0` | float | Token0 amount (positive = into pool) |
+| `amount1` | float | Token1 amount (positive = into pool) |
+| `price` | float | Price after swap (token1/token0) |
+| `timestamp` | int | Unix timestamp |
+
+Optional but helpful:
+- `volume` - Swap volume in USD
+- `txn_hash` - Transaction identifier
+- `sender` - Address that initiated swap
+
+## Loading from The Graph
+
+### Uniswap V3 Subgraph
+
+```python
+import pandas as pd
+import requests
+
+def load_v3_swaps_from_subgraph(
+    pool_address: str,
+    start_timestamp: int,
+    end_timestamp: int,
+    first: int = 1000,
+) -> pd.DataFrame:
+    """Load V3 swap data from The Graph."""
+
+    endpoint = "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3"
+
+    query = """
+    query getSwaps($pool: String!, $startTime: Int!, $endTime: Int!, $first: Int!) {
+        swaps(
+            where: {
+                pool: $pool
+                timestamp_gte: $startTime
+                timestamp_lte: $endTime
+            }
+            orderBy: timestamp
+            orderDirection: asc
+            first: $first
+        ) {
+            amount0
+            amount1
+            sqrtPriceX96
+            timestamp
+            transaction { id }
+        }
+    }
+    """
+
+    variables = {
+        "pool": pool_address.lower(),
+        "startTime": start_timestamp,
+        "endTime": end_timestamp,
+        "first": first,
+    }
+
+    response = requests.post(
+        endpoint,
+        json={"query": query, "variables": variables}
+    )
+
+    data = response.json()["data"]["swaps"]
+
+    # Convert to DataFrame
+    df = pd.DataFrame(data)
+    df['amount0'] = df['amount0'].astype(float)
+    df['amount1'] = df['amount1'].astype(float)
+    df['timestamp'] = df['timestamp'].astype(int)
+
+    # Calculate price from sqrtPriceX96
+    df['sqrtPriceX96'] = df['sqrtPriceX96'].astype(float)
+    df['price'] = (df['sqrtPriceX96'] / (2**96)) ** 2
+
+    return df[['amount0', 'amount1', 'price', 'timestamp']]
+
+# Example usage
+pool = "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8"  # USDC-ETH 0.3%
+swaps = load_v3_swaps_from_subgraph(
+    pool_address=pool,
+    start_timestamp=1700000000,
+    end_timestamp=1700100000,
+)
+print(f"Loaded {len(swaps)} swaps")
+```
+
+### Uniswap V2 Subgraph
+
+```python
+def load_v2_swaps_from_subgraph(
+    pair_address: str,
+    start_timestamp: int,
+    end_timestamp: int,
+    first: int = 1000,
+) -> pd.DataFrame:
+    """Load V2 swap data from The Graph."""
+
+    endpoint = "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2"
+
+    query = """
+    query getSwaps($pair: String!, $startTime: Int!, $endTime: Int!, $first: Int!) {
+        swaps(
+            where: {
+                pair: $pair
+                timestamp_gte: $startTime
+                timestamp_lte: $endTime
+            }
+            orderBy: timestamp
+            orderDirection: asc
+            first: $first
+        ) {
+            amount0In
+            amount0Out
+            amount1In
+            amount1Out
+            timestamp
+        }
+    }
+    """
+
+    variables = {
+        "pair": pair_address.lower(),
+        "startTime": start_timestamp,
+        "endTime": end_timestamp,
+        "first": first,
+    }
+
+    response = requests.post(
+        endpoint,
+        json={"query": query, "variables": variables}
+    )
+
+    data = response.json()["data"]["swaps"]
+    df = pd.DataFrame(data)
+
+    # Convert to standard format
+    df['amount0'] = df['amount0In'].astype(float) - df['amount0Out'].astype(float)
+    df['amount1'] = df['amount1In'].astype(float) - df['amount1Out'].astype(float)
+    df['timestamp'] = df['timestamp'].astype(int)
+
+    # Calculate price
+    df['price'] = abs(df['amount1']) / abs(df['amount0'])
+
+    return df[['amount0', 'amount1', 'price', 'timestamp']]
+```
+
+## Loading from Dune Analytics
+
+```python
+from dune_client.client import DuneClient
+from dune_client.query import Query
+
+def load_from_dune(query_id: int, api_key: str) -> pd.DataFrame:
+    """Load swap data from a Dune query."""
+
+    dune = DuneClient(api_key)
+    query = Query(query_id=query_id)
+
+    result = dune.execute(query)
+    df = pd.DataFrame(result.get_rows())
+
+    # Ensure required columns
+    required = ['amount0', 'amount1', 'price', 'timestamp']
+    assert all(col in df.columns for col in required)
+
+    return df[required]
+
+# Example Dune query for V3 swaps:
+# SELECT
+#   amount0,
+#   amount1,
+#   sqrt_price_x96,
+#   block_time
+# FROM uniswap_v3.trades
+# WHERE pool_address = 0x...
+# ORDER BY block_time
+```
+
+## Loading from CSV Files
+
+If you have swap data in CSV format:
+
+```python
+def load_swaps_from_csv(filepath: str) -> pd.DataFrame:
+    """Load swap data from CSV file."""
+
+    df = pd.read_csv(filepath)
+
+    # Rename columns if needed
+    column_mapping = {
+        'token0_amount': 'amount0',
+        'token1_amount': 'amount1',
+        'swap_price': 'price',
+        'block_timestamp': 'timestamp',
+    }
+    df = df.rename(columns=column_mapping)
+
+    # Ensure types
+    df['amount0'] = df['amount0'].astype(float)
+    df['amount1'] = df['amount1'].astype(float)
+    df['price'] = df['price'].astype(float)
+    df['timestamp'] = df['timestamp'].astype(int)
+
+    return df[['amount0', 'amount1', 'price', 'timestamp']]
+
+# Usage
+swaps = load_swaps_from_csv("eth_usdc_swaps.csv")
+```
+
+## Loading Solana/Meteora Data
+
+```python
+import asyncio
+from solana.rpc.async_api import AsyncClient
+
+async def load_meteora_swaps(
+    pool_address: str,
+    limit: int = 1000,
+) -> pd.DataFrame:
+    """Load DLMM swap data from Solana."""
+
+    client = AsyncClient("https://api.mainnet-beta.solana.com")
+
+    # Get transaction signatures for pool
+    sigs = await client.get_signatures_for_address(
+        pool_address,
+        limit=limit,
+    )
+
+    swaps = []
+    for sig in sigs.value:
+        # Parse each transaction for swap events
+        tx = await client.get_transaction(sig.signature)
+        # Extract swap data from logs...
+        # (Implementation depends on program structure)
+        pass
+
+    await client.close()
+    return pd.DataFrame(swaps)
+
+# For simpler approach, use existing data providers
+# like Birdeye or Helius APIs
+```
+
+## Data Validation
+
+Before using real data, validate it:
+
+```python
+def validate_swap_data(df: pd.DataFrame) -> bool:
+    """Validate swap data format and quality."""
+
+    # Check required columns
+    required = ['amount0', 'amount1', 'price', 'timestamp']
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        print(f"Missing columns: {missing}")
+        return False
+
+    # Check for nulls
+    null_counts = df[required].isnull().sum()
+    if null_counts.any():
+        print(f"Null values found:\n{null_counts}")
+        return False
+
+    # Check types
+    if not pd.api.types.is_numeric_dtype(df['amount0']):
+        print("amount0 must be numeric")
+        return False
+
+    # Check price sanity
+    if (df['price'] <= 0).any():
+        print(f"Found {(df['price'] <= 0).sum()} non-positive prices")
+        return False
+
+    # Check timestamp ordering
+    if not df['timestamp'].is_monotonic_increasing:
+        print("Timestamps not in order")
+        return False
+
+    # Check for duplicates
+    dupes = df['timestamp'].duplicated().sum()
+    if dupes > 0:
+        print(f"Found {dupes} duplicate timestamps")
+
+    print(f"Validation passed!")
+    print(f"  Swaps: {len(df)}")
+    print(f"  Date range: {pd.to_datetime(df['timestamp'].min(), unit='s')} to {pd.to_datetime(df['timestamp'].max(), unit='s')}")
+    print(f"  Price range: {df['price'].min():.6f} - {df['price'].max():.6f}")
+
+    return True
+
+# Usage
+is_valid = validate_swap_data(swaps)
+```
+
+## Data Preprocessing
+
+### Handling Token Decimals
+
+Different tokens have different decimals:
+
+```python
+def adjust_for_decimals(
+    df: pd.DataFrame,
+    token0_decimals: int,
+    token1_decimals: int,
+) -> pd.DataFrame:
+    """Adjust amounts for token decimals."""
+
+    df = df.copy()
+    df['amount0'] = df['amount0'] / (10 ** token0_decimals)
+    df['amount1'] = df['amount1'] / (10 ** token1_decimals)
+
+    # Recalculate price in human-readable units
+    df['price'] = abs(df['amount1']) / abs(df['amount0'])
+
+    return df
+
+# Example: ETH (18 decimals) / USDC (6 decimals)
+swaps = adjust_for_decimals(swaps, token0_decimals=18, token1_decimals=6)
+```
+
+### Filtering Outliers
+
+```python
+def filter_outliers(df: pd.DataFrame, price_std_threshold: float = 5) -> pd.DataFrame:
+    """Remove swaps with outlier prices."""
+
+    mean_price = df['price'].mean()
+    std_price = df['price'].std()
+
+    lower = mean_price - price_std_threshold * std_price
+    upper = mean_price + price_std_threshold * std_price
+
+    filtered = df[(df['price'] >= lower) & (df['price'] <= upper)]
+
+    removed = len(df) - len(filtered)
+    if removed > 0:
+        print(f"Removed {removed} outlier swaps ({removed/len(df):.1%})")
+
+    return filtered
+
+swaps = filter_outliers(swaps)
+```
+
+### Resampling
+
+If you have too much data, resample:
+
+```python
+def resample_swaps(df: pd.DataFrame, interval_seconds: int = 60) -> pd.DataFrame:
+    """Aggregate swaps into time buckets."""
+
+    df = df.copy()
+    df['bucket'] = (df['timestamp'] // interval_seconds) * interval_seconds
+
+    resampled = df.groupby('bucket').agg({
+        'amount0': 'sum',
+        'amount1': 'sum',
+        'price': 'last',  # Use last price in bucket
+        'timestamp': 'last',
+    }).reset_index(drop=True)
+
+    return resampled
+
+# Resample to 1-minute buckets
+swaps = resample_swaps(swaps, interval_seconds=60)
+```
+
+## Running Backtest with Real Data
+
+```python
+import ammbt as amm
+
+# Load and validate data
+swaps = load_v3_swaps_from_subgraph(
+    pool_address="0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8",
+    start_timestamp=1700000000,
+    end_timestamp=1700500000,
+)
+swaps = adjust_for_decimals(swaps, 6, 18)  # USDC/ETH
+swaps = filter_outliers(swaps)
+
+validate_swap_data(swaps)
+
+# Get initial price for backtester
+initial_price = swaps['price'].iloc[0]
+print(f"Initial price: {initial_price:.2f}")
+
+# Run backtest
+bt = amm.LPBacktester(
+    amm_type='v3',
+    initial_price=initial_price,
+    fee_tier=3000,
+)
+
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': [-200, -400, -600],
+    'tick_upper': [200, 400, 600],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+
+result = bt.run(swaps, strategies)
+print(result.summary().head(10))
+```
+
+## Comparing Synthetic vs. Real Data
+
+```python
+# Generate synthetic data with similar characteristics
+real_vol = swaps['price'].pct_change().std() * np.sqrt(365 * 24 * 60)  # Annualized
+real_volume = swaps['amount1'].abs().mean()
+
+synthetic_swaps = amm.generate_swaps(
+    n_swaps=len(swaps),
+    initial_price=initial_price,
+    price_volatility=real_vol / np.sqrt(365),  # Daily
+    base_volume=real_volume,
+    seed=42,
+)
+
+# Run same strategies on both
+result_real = bt.run(swaps, strategies)
+result_synth = bt.run(synthetic_swaps, strategies)
+
+# Compare
+print("Real Data Results:")
+print(result_real.summary().head(5))
+
+print("\nSynthetic Data Results:")
+print(result_synth.summary().head(5))
+```
+
+## Best Practices
+
+<Check>
+Always validate data before using it
+</Check>
+
+<Check>
+Adjust for token decimals appropriately
+</Check>
+
+<Check>
+Remove outliers that could skew results
+</Check>
+
+<Check>
+Check that price direction matches amount signs
+</Check>
+
+<Check>
+Consider the time period - avoid selecting only bull/bear markets
+</Check>
+
+<Check>
+Compare results with synthetic data to understand model assumptions
+</Check>
+
+## Common Issues
+
+<Warning>
+**Stale data**: Ensure your data source is up-to-date
+</Warning>
+
+<Warning>
+**Decimal errors**: Wrong decimals can cause 1000x price errors
+</Warning>
+
+<Warning>
+**Survivorship bias**: Pools that failed won't be in historical data
+</Warning>
+
+<Warning>
+**Rate limits**: API calls may be rate-limited; cache data locally
+</Warning>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Vectorized Strategies" icon="bolt" href="/tutorials/advanced/vectorized-strategies">
+    Build custom strategy logic
+  </Card>
+  <Card title="Live Streaming" icon="satellite-dish" href="/tutorials/advanced/live-swap-streaming">
+    Connect to real-time data
+  </Card>
+</CardGroup>

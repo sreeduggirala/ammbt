@@ -1,0 +1,66 @@
+---
+title: "BaseAMMSimulator"
+description: "Abstract base class for AMM simulators"
+---
+
+# BaseAMMSimulator
+
+Abstract base class that all AMM simulators inherit from.
+
+## Interface
+
+```python
+from abc import ABC, abstractmethod
+
+class BaseAMMSimulator(ABC):
+
+    @abstractmethod
+    def get_position_dtype(self) -> np.dtype:
+        """Return the structured dtype for position state."""
+        pass
+
+    @abstractmethod
+    def get_strategy_dtype(self) -> np.dtype:
+        """Return the structured dtype for strategy parameters."""
+        pass
+
+    @abstractmethod
+    def initialize_positions(
+        self,
+        n_strategies: int,
+        n_swaps: int,
+        strategy_params: np.ndarray,
+    ) -> np.ndarray:
+        """Initialize position state array."""
+        pass
+
+    @abstractmethod
+    def simulate(
+        self,
+        swaps: pd.DataFrame,
+        positions: np.ndarray,
+        strategy_params: np.ndarray,
+    ) -> np.ndarray:
+        """Run simulation and return updated positions."""
+        pass
+
+    @abstractmethod
+    def calculate_metrics(
+        self,
+        positions: np.ndarray,
+        swaps: pd.DataFrame,
+        strategy_params: np.ndarray,
+    ) -> pd.DataFrame:
+        """Calculate performance metrics from positions."""
+        pass
+```
+
+## Implementing Custom Simulators
+
+See [Custom AMM Simulator](/tutorials/advanced/custom-amm-simulator) tutorial.
+
+## See Also
+
+- [UniswapV2Simulator](/api-reference/amms/uniswap-v2-simulator)
+- [UniswapV3Simulator](/api-reference/amms/uniswap-v3-simulator)
+- [MeteoraLMMSimulator](/api-reference/amms/meteora-dlmm-simulator)

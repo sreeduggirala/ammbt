@@ -1,0 +1,321 @@
+---
+title: "Impermanent Loss"
+description: "Understanding the key risk for liquidity providers"
+---
+
+# Impermanent Loss
+
+**Impermanent Loss (IL)** is the difference in value between holding tokens in an LP position versus simply holding them in a wallet. It's the primary risk for liquidity providers.
+
+## What is Impermanent Loss?
+
+When you provide liquidity, the AMM automatically rebalances your position as prices change. This rebalancing means you end up with different amounts of tokens than you started with.
+
+### Simple Example
+
+Starting position at price $1:
+- 100 ETH
+- 100 USDC
+- Total: $200
+
+If ETH price doubles to $2:
+
+**Just holding:**
+- 100 ETH × $2 = $200
+- 100 USDC = $100
+- Total: **$300**
+
+**LP position (rebalanced):**
+- ~70.7 ETH × $2 = $141.4
+- ~141.4 USDC = $141.4
+- Total: **$282.8**
+
+**Impermanent Loss: $300 - $282.8 = $17.2 (5.7%)**
+
+## Why "Impermanent"?
+
+The loss is called "impermanent" because:
+
+1. **It's unrealized** until you withdraw
+2. **It can reverse** if price returns to entry
+3. **Fees may compensate** over time
+
+However, if you withdraw at a different price, the loss becomes permanent.
+
+## The Math
+
+### V2 (CPAMM) IL Formula
+
+For a price change ratio $r = P_{final} / P_{initial}$:
+
+$$IL = \frac{2\sqrt{r}}{1 + r} - 1$$
+
+This can be derived from the constant product formula:
+- Initial: $x_0 \cdot y_0 = k$
+- At price $P$: $x \cdot y = k$ and $y/x = P$
+- Solving: $x = \sqrt{k/P}$, $y = \sqrt{kP}$
+
+### IL Table
+
+| Price Multiplier | IL |
+|-----------------|-----|
+| 0.25x | -20.0% |
+| 0.50x | -5.7% |
+| 0.75x | -1.3% |
+| 1.00x | 0.0% |
+| 1.25x | -0.6% |
+| 1.50x | -2.0% |
+| 2.00x | -5.7% |
+| 3.00x | -13.4% |
+| 4.00x | -20.0% |
+| 5.00x | -25.5% |
+
+<Note>
+IL is symmetric: 2x up and 0.5x down produce the same IL.
+</Note>
+
+### Visualizing IL
+
+```python
+import numpy as np
+import plotly.graph_objects as go
+
+def calculate_il(price_ratio):
+    return 2 * np.sqrt(price_ratio) / (1 + price_ratio) - 1
+
+ratios = np.linspace(0.1, 5, 200)
+il = calculate_il(ratios) * 100
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=ratios, y=il, name='IL'))
+fig.add_hline(y=0, line_dash='dash', line_color='gray')
+fig.add_vline(x=1, line_dash='dash', line_color='gray')
+fig.update_layout(
+    title='Impermanent Loss vs Price Change',
+    xaxis_title='Price Ratio (Final/Initial)',
+    yaxis_title='Impermanent Loss (%)'
+)
+fig.show()
+```
+
+## V3 Concentrated IL
+
+In V3, IL is **amplified** by concentration:
+
+$$IL_{V3} \approx IL_{V2} \times CF$$
+
+Where **Concentration Factor (CF)**:
+
+$$CF = \frac{\sqrt{P_b} + \sqrt{P_a}}{\sqrt{P_b} - \sqrt{P_a}}$$
+
+### Concentration Factor Table
+
+| Range Width | CF | 2x Move IL |
+|-------------|-----|-----------|
+| Full range | 1x | 5.7% |
+| ±50% | ~5x | ~29% |
+| ±20% | ~12x | ~68% |
+| ±10% | ~21x | ~100%+ |
+| ±5% | ~40x | ~100%+ |
+
+<Warning>
+Very narrow ranges can experience 100% IL if price exits the range.
+</Warning>
+
+### Out-of-Range IL
+
+When price exits your V3 range:
+- Position converts to 100% of one token
+- IL is "locked in" at the range boundary
+- No additional IL accrues, but position earns no fees
+
+```python
+# Position with range [1800, 2200] on ETH/USDC
+# If ETH goes to 2500:
+# - Position is 100% USDC
+# - IL calculated at 2200 (upper bound)
+# - No fees earned above 2200
+```
+
+## IL vs Fees
+
+The key question: **Do fees exceed IL?**
+
+$$\text{Net PnL} = \text{Fees Earned} - |IL| - \text{Gas Costs}$$
+
+### Break-even Analysis
+
+```python
+def break_even_fee_rate(price_change, holding_period_days, apy_needed=0):
+    """Calculate fee APR needed to overcome IL."""
+    il = abs(calculate_il(price_change))
+    daily_il = il / holding_period_days
+    return (daily_il * 365) + apy_needed
+
+# For 2x price change over 30 days, need ~69% APR to break even
+print(f"Break-even APR: {break_even_fee_rate(2.0, 30):.1%}")
+```
+
+### When Fees Win
+
+<Check>
+High trading volume relative to liquidity
+</Check>
+
+<Check>
+Price stays relatively stable
+</Check>
+
+<Check>
+Holding period is long enough for fees to accumulate
+</Check>
+
+<Check>
+Lower gas costs (fewer rebalances)
+</Check>
+
+### When IL Wins
+
+<Warning>
+Large price movements
+</Warning>
+
+<Warning>
+Low trading volume
+</Warning>
+
+<Warning>
+Short holding periods
+</Warning>
+
+<Warning>
+Frequent rebalancing with high gas
+</Warning>
+
+## Mitigating IL
+
+### 1. Choose Stable Pairs
+
+Stable-stable pairs (USDC/USDT) have minimal IL:
+
+```python
+# Stable pair: price stays ~1.0
+# Max deviation usually < 1%
+# IL < 0.01% typically
+```
+
+### 2. Use Wider Ranges (V3/DLMM)
+
+Wider ranges = lower concentration = lower IL
+
+```python
+strategies = {
+    # Narrow range: high fees but high IL risk
+    'narrow': {'tick_lower': -100, 'tick_upper': 100},
+    # Wide range: lower fees but lower IL risk
+    'wide': {'tick_lower': -1000, 'tick_upper': 1000},
+}
+```
+
+### 3. Hedge with Options
+
+Buy put/call options to hedge directional exposure:
+
+```
+Position: ETH-USDC LP
+Hedge: Buy ETH put option
+
+If ETH drops:
+- LP loses value (IL)
+- Put option gains value
+- Net: partially hedged
+```
+
+### 4. Use IL-Resistant Strategies
+
+```python
+# Rebalancing can crystallize gains
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-200],
+    'tick_upper': [200],
+    'rebalance_threshold': [0.10],  # Rebalance on 10% move
+}
+# Rebalancing resets IL to zero (but realizes it)
+```
+
+## Calculating IL in ammBT
+
+### From BacktestResult
+
+```python
+result = bt.run(swaps, strategies)
+
+# IL is tracked in metrics
+il = result.metrics['impermanent_loss']
+print(f"IL: ${il.iloc[0]:.2f}")
+
+# As percentage of initial capital
+il_pct = il / result.metrics['initial_capital'] * 100
+print(f"IL: {il_pct.iloc[0]:.2f}%")
+```
+
+### Manual Calculation
+
+```python
+def calculate_il_from_history(history, swaps, initial_capital):
+    """Calculate IL from position history."""
+
+    # Final position value
+    final_price = swaps['price'].iloc[-1]
+    final_value = (
+        history['token0_balance'].iloc[-1] * final_price +
+        history['token1_balance'].iloc[-1]
+    )
+
+    # What if we just held?
+    initial_price = swaps['price'].iloc[0]
+    initial_token0 = initial_capital / 2 / initial_price
+    initial_token1 = initial_capital / 2
+
+    hold_value = initial_token0 * final_price + initial_token1
+
+    # IL
+    il = final_value - hold_value
+    il_pct = il / initial_capital * 100
+
+    return il, il_pct
+```
+
+## Key Takeaways
+
+<Check>
+IL is the cost of rebalancing in an AMM
+</Check>
+
+<Check>
+It's symmetric: 2x up = 0.5x down in IL terms
+</Check>
+
+<Check>
+Concentrated liquidity amplifies IL
+</Check>
+
+<Check>
+Fees must exceed IL for profitable LPing
+</Check>
+
+<Check>
+IL is "impermanent" only if price returns to entry
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="PnL Calculations" icon="calculator" href="/concepts/metrics/pnl-calculations">
+    How ammBT calculates profit/loss
+  </Card>
+  <Card title="Vectorized Design" icon="bolt" href="/concepts/architecture/vectorized-design">
+    How ammBT simulates efficiently
+  </Card>
+</CardGroup>

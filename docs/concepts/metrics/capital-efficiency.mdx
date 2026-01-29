@@ -1,0 +1,304 @@
+---
+title: "Capital Efficiency"
+description: "Measuring and optimizing LP capital efficiency"
+---
+
+# Capital Efficiency
+
+Capital efficiency measures how effectively your capital generates returns. Concentrated liquidity protocols (V3, DLMM) can achieve much higher efficiency than full-range protocols (V2).
+
+## What is Capital Efficiency?
+
+Capital efficiency = how much value you provide per dollar of capital.
+
+### V2 Efficiency
+
+In V2, liquidity is spread across all prices (0 to ∞), but only a tiny fraction is used at any given price:
+
+```python
+# At price P, effective liquidity fraction
+# is approximately: 1 / (2 * sqrt(P_max/P_min))
+# For full range, this approaches 0
+```
+
+### V3 Efficiency
+
+In V3, you choose a range, concentrating all capital there:
+
+$$\text{Efficiency} = \frac{\sqrt{P_{upper}} \cdot \sqrt{P_{lower}}}{\sqrt{P_{upper}} - \sqrt{P_{lower}}}$$
+
+### Efficiency Table
+
+| Range Width | Approximate Efficiency |
+|-------------|----------------------|
+| ±1% | ~100x |
+| ±5% | ~20x |
+| ±10% | ~10x |
+| ±25% | ~4x |
+| ±50% | ~2x |
+| Full range | 1x |
+
+## Calculating Efficiency
+
+### Range-Based Efficiency
+
+```python
+from ammbt.utils import tick_to_price
+
+def calculate_v3_efficiency(tick_lower, tick_upper, current_tick):
+    """Calculate V3 capital efficiency factor."""
+
+    p_lower = tick_to_price(tick_lower)
+    p_upper = tick_to_price(tick_upper)
+    p_current = tick_to_price(current_tick)
+
+    sqrt_lower = np.sqrt(p_lower)
+    sqrt_upper = np.sqrt(p_upper)
+    sqrt_current = np.sqrt(p_current)
+
+    # Only if in range
+    if tick_lower <= current_tick < tick_upper:
+        efficiency = (sqrt_upper * sqrt_lower) / (sqrt_upper - sqrt_lower)
+    else:
+        efficiency = 0  # Out of range, not earning
+
+    return efficiency
+```
+
+### Realized Efficiency
+
+Actual efficiency over the backtest period:
+
+```python
+def calculate_realized_efficiency(result, swaps, strategy_idx=0):
+    """Calculate realized capital efficiency."""
+
+    metrics = result.metrics.iloc[strategy_idx]
+
+    # Fee earnings per dollar
+    fees_per_capital = metrics['total_fees_earned'] / metrics['initial_capital']
+
+    # Time-adjusted (annualized)
+    days = (swaps['timestamp'].iloc[-1] - swaps['timestamp'].iloc[0]) / 86400
+    annual_fee_yield = fees_per_capital * (365 / days)
+
+    # Compare to benchmark (V2 equivalent)
+    # Estimate V2 fees for same capital
+    # This requires volume data and V2 simulation
+
+    return {
+        'fee_yield': fees_per_capital,
+        'annual_fee_yield': annual_fee_yield,
+        'time_in_range': metrics.get('time_in_position', 100),
+    }
+```
+
+## Effective Capital
+
+### In-Range Capital
+
+Only in-range capital earns fees:
+
+```python
+def calculate_effective_capital(result, strategy_idx=0):
+    """Calculate time-weighted effective capital."""
+
+    history = result.get_position_history(strategy_idx)
+    initial_capital = result.strategy_params['initial_capital'].iloc[strategy_idx]
+
+    # Time in range
+    in_range_ratio = history['is_in_range'].mean()
+
+    # Effective capital = capital × time in range
+    effective_capital = initial_capital * in_range_ratio
+
+    return {
+        'initial_capital': initial_capital,
+        'effective_capital': effective_capital,
+        'utilization': in_range_ratio * 100,
+    }
+```
+
+### Capital Utilization
+
+```python
+# High utilization = narrow range that stays in range
+# Low utilization = too narrow (goes out of range) or too wide (inefficient)
+
+utilization = result.metrics['time_in_position']  # Percentage
+
+# Optimal utilization balances:
+# - High efficiency (narrow range)
+# - High time in range (stay earning)
+```
+
+## Efficiency Metrics
+
+### Fee Yield
+
+Return from fees alone:
+
+```python
+fee_yield = result.metrics['total_fees_earned'] / result.metrics['initial_capital']
+```
+
+### Fee APR
+
+Annualized fee yield:
+
+```python
+days = (swaps['timestamp'].iloc[-1] - swaps['timestamp'].iloc[0]) / 86400
+fee_apr = fee_yield * (365 / days) * 100
+```
+
+### Efficiency Score
+
+Combined metric balancing efficiency and utilization:
+
+```python
+def calculate_efficiency_score(result, strategy_idx=0):
+    """Calculate overall efficiency score."""
+
+    metrics = result.metrics.iloc[strategy_idx]
+
+    # Components
+    fee_yield = metrics['total_fees_earned'] / metrics['initial_capital']
+    time_in_range = metrics.get('time_in_position', 100) / 100
+    sharpe = max(0, metrics['sharpe'])  # Only positive Sharpe
+
+    # Weighted score
+    score = (
+        0.4 * fee_yield * 100 +      # Fee yield (scaled)
+        0.3 * time_in_range * 100 +  # Utilization
+        0.3 * sharpe * 10            # Risk-adjusted
+    )
+
+    return score
+```
+
+## Optimizing Efficiency
+
+### Finding Optimal Range
+
+```python
+def find_optimal_range(result):
+    """Find range width that optimizes efficiency score."""
+
+    # Calculate efficiency score for each strategy
+    result.metrics['efficiency_score'] = result.metrics.apply(
+        lambda row: calculate_strategy_efficiency(row),
+        axis=1
+    )
+
+    # Group by range width
+    if 'tick_lower' in result.metrics.columns:
+        result.metrics['range_width'] = (
+            result.metrics['tick_upper'] - result.metrics['tick_lower']
+        )
+
+        optimal = result.metrics.groupby('range_width').agg({
+            'efficiency_score': 'mean',
+            'fee_yield': 'mean',
+            'time_in_position': 'mean',
+        })
+
+        return optimal.sort_values('efficiency_score', ascending=False)
+
+    return None
+```
+
+### Efficiency vs Risk Trade-off
+
+```python
+import plotly.express as px
+
+def plot_efficiency_vs_risk(result):
+    """Plot efficiency against risk metrics."""
+
+    fig = px.scatter(
+        result.metrics,
+        x='max_drawdown_pct',
+        y=result.metrics['total_fees_earned'] / result.metrics['initial_capital'] * 100,
+        color='time_in_position',
+        size='initial_capital',
+        hover_data=['tick_lower', 'tick_upper'],
+        labels={
+            'x': 'Max Drawdown (%)',
+            'y': 'Fee Yield (%)',
+            'color': 'Time in Range (%)',
+        },
+        title='Efficiency vs Risk',
+    )
+
+    return fig
+```
+
+## V3 vs DLMM Efficiency
+
+### DLMM Advantages
+
+- **Lower gas**: ~$0.50 vs ~$100 per rebalance
+- **More frequent rebalancing**: Can optimize range more often
+- **Dynamic fees**: Higher fees during volatility protect capital
+
+```python
+# Compare efficiency across AMM types
+def compare_amm_efficiency(swaps, capital=25000):
+    """Compare efficiency across AMM types."""
+
+    results = {}
+
+    # V3
+    bt_v3 = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+    result_v3 = bt_v3.run(swaps, {
+        'initial_capital': [capital],
+        'tick_lower': [-200],
+        'tick_upper': [200],
+    })
+    results['V3'] = result_v3.metrics.iloc[0]
+
+    # DLMM (similar range)
+    bt_dlmm = amm.LPBacktester(amm_type='dlmm', bin_step=25)
+    result_dlmm = bt_dlmm.run(swaps, {
+        'initial_capital': [capital],
+        'bin_lower': [-40],
+        'bin_upper': [40],
+        'liquidity_shape': [1],  # Curve
+    })
+    results['DLMM'] = result_dlmm.metrics.iloc[0]
+
+    # Compare
+    comparison = pd.DataFrame(results).T
+    comparison['fee_yield'] = comparison['total_fees_earned'] / capital * 100
+
+    return comparison[['fee_yield', 'time_in_position', 'gas_spent', 'net_pnl']]
+```
+
+## Key Takeaways
+
+<Check>
+Narrower ranges = higher efficiency but more risk
+</Check>
+
+<Check>
+Time in range is critical for realized efficiency
+</Check>
+
+<Check>
+Gas costs reduce effective efficiency (V3 > DLMM)
+</Check>
+
+<Check>
+Optimal range depends on volatility and volume
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Risk Metrics" icon="triangle-exclamation" href="/concepts/metrics/risk-metrics">
+    Drawdown and Sharpe
+  </Card>
+  <Card title="V3 Tutorial" icon="play" href="/tutorials/intermediate/uniswap-v3-backtesting">
+    Optimize V3 strategies
+  </Card>
+</CardGroup>

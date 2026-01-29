@@ -1,0 +1,81 @@
+---
+title: "Calculate Metrics"
+description: "Metric calculation functions"
+---
+
+# Calculate Metrics
+
+Functions for calculating performance metrics from backtest positions.
+
+## Main Function
+
+### calculate_all_metrics
+
+Calculate all metrics for a backtest.
+
+```python
+def calculate_all_metrics(
+    positions: np.ndarray,
+    swaps: pd.DataFrame,
+    strategy_params: np.ndarray,
+) -> pd.DataFrame
+```
+
+Returns DataFrame with:
+
+| Metric | Description |
+|--------|-------------|
+| `net_pnl` | Net profit/loss |
+| `total_return_pct` | Return percentage |
+| `sharpe` | Sharpe ratio |
+| `max_drawdown_pct` | Maximum drawdown |
+| `total_fees_earned` | Fee income |
+| `impermanent_loss` | IL in USD |
+| `num_rebalances` | Rebalance count |
+| `gas_spent` | Gas costs |
+| `time_in_position` | Time in range |
+
+## Individual Metrics
+
+### calculate_net_pnl
+
+```python
+def calculate_net_pnl(
+    positions: np.ndarray,
+    swaps: pd.DataFrame,
+    strategy_params: np.ndarray,
+) -> np.ndarray
+```
+
+### calculate_sharpe
+
+```python
+def calculate_sharpe(
+    positions: np.ndarray,
+    swaps: pd.DataFrame,
+) -> np.ndarray
+```
+
+### calculate_max_drawdown
+
+```python
+def calculate_max_drawdown(
+    positions: np.ndarray,
+    swaps: pd.DataFrame,
+) -> np.ndarray
+```
+
+### calculate_impermanent_loss
+
+```python
+def calculate_impermanent_loss(
+    positions: np.ndarray,
+    swaps: pd.DataFrame,
+    strategy_params: np.ndarray,
+) -> np.ndarray
+```
+
+## See Also
+
+- [PnL Calculations](/concepts/metrics/pnl-calculations)
+- [Risk Metrics](/concepts/metrics/risk-metrics)

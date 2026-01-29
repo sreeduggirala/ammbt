@@ -1,0 +1,72 @@
+---
+title: "Rebalancing Strategies"
+description: "Configure rebalancing behavior for LP positions"
+---
+
+# Rebalancing Strategies
+
+## No Rebalancing (Passive)
+
+```python
+strategies = {
+    'rebalance_threshold': [0.0],
+    'rebalance_frequency': [0],
+}
+```
+
+## Price-Based Rebalancing
+
+Rebalance when price moves by threshold:
+
+```python
+strategies = {
+    'rebalance_threshold': [0.05],  # 5% move
+    'rebalance_frequency': [0],     # No frequency limit
+}
+```
+
+## Frequency-Based Rebalancing
+
+Rebalance after minimum swaps:
+
+```python
+strategies = {
+    'rebalance_threshold': [0.0],
+    'rebalance_frequency': [200],   # Every 200 swaps
+}
+```
+
+## Combined (OR Logic)
+
+Rebalance on either condition:
+
+```python
+strategies = {
+    'rebalance_threshold': [0.05],  # 5% move OR
+    'rebalance_frequency': [200],   # 200 swaps
+}
+```
+
+## Finding Optimal Settings
+
+```python
+strategies = {
+    'initial_capital': [25000],
+    'rebalance_threshold': [0.0, 0.03, 0.05, 0.10],
+    'rebalance_frequency': [0, 100, 200, 500],
+}
+
+result = bt.run(swaps, strategies)
+
+# Analyze
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='rebalance_threshold',
+    y_param='rebalance_frequency',
+    metric='net_pnl'
+)
+```
+
+## See Also
+
+- [Custom Rebalancing](/tutorials/intermediate/custom-rebalancing)

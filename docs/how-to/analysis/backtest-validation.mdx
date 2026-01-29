@@ -1,0 +1,72 @@
+---
+title: "Backtest Validation"
+description: "Validate backtest results for reliability"
+---
+
+# Backtest Validation
+
+## Walk-Forward Testing
+
+```python
+n_periods = 5
+period_size = len(swaps) // n_periods
+
+results = []
+for i in range(n_periods):
+    period_swaps = swaps.iloc[i*period_size:(i+1)*period_size]
+    result = bt.run(period_swaps, strategies)
+    best = result.summary().iloc[0]
+    results.append({
+        'period': i,
+        'best_params': (best['tick_lower'], best['tick_upper']),
+        'net_pnl': best['net_pnl'],
+    })
+
+print(pd.DataFrame(results))
+```
+
+## Monte Carlo Testing
+
+```python
+import numpy as np
+
+mc_results = []
+for seed in range(20):
+    test_swaps = amm.generate_swaps(
+        n_swaps=10000,
+        price_volatility=0.03,
+        seed=seed
+    )
+    result = bt.run(test_swaps, strategies)
+    mc_results.append(result.summary().iloc[0]['net_pnl'])
+
+print(f"Mean: ${np.mean(mc_results):.2f}")
+print(f"Std: ${np.std(mc_results):.2f}")
+print(f"Win rate: {(np.array(mc_results) > 0).mean():.1%}")
+```
+
+## Sensitivity Analysis
+
+```python
+# How sensitive are results to parameter changes?
+base = result.summary().iloc[0]
+
+variations = {
+    'tick_lower': [base['tick_lower'] - 50, base['tick_lower'], base['tick_lower'] + 50],
+    'tick_upper': [base['tick_upper'] - 50, base['tick_upper'], base['tick_upper'] + 50],
+}
+
+var_result = bt.run(swaps, variations)
+print(var_result.metrics['net_pnl'])
+print(f"Sensitivity: ${var_result.metrics['net_pnl'].std():.2f}")
+```
+
+## Check for Overfitting
+
+- Results consistent across time periods?
+- Results consistent across random seeds?
+- Parameters make economic sense?
+
+## See Also
+
+- [Strategy Optimization](/tutorials/intermediate/strategy-optimization)

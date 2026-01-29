@@ -1,0 +1,56 @@
+---
+title: "Basic V2 Backtest"
+description: "Simple Uniswap V2 LP backtest example"
+---
+
+# Basic V2 Backtest
+
+A simple example of running a Uniswap V2 backtest.
+
+```python
+import ammbt as amm
+
+# Generate synthetic swap data
+swaps = amm.generate_swaps(
+    n_swaps=10000,
+    initial_price=1.0,
+    price_volatility=0.02,
+    seed=42
+)
+
+# Define strategies
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+    'rebalance_frequency': [0],
+}
+
+# Create backtester and run
+bt = amm.LPBacktester(amm_type='v2')
+result = bt.run(swaps, strategies)
+
+# View results
+print("Results Summary:")
+print(result.summary())
+
+# Visualize best strategy
+best_idx = result.summary().index[0]
+fig = amm.plot_performance(result, strategy_idx=best_idx)
+fig.show()
+```
+
+## Expected Output
+
+```
+Results Summary:
+   initial_capital  rebalance_threshold  net_pnl  total_return_pct  sharpe
+0            50000                 0.05   523.45              1.05    0.89
+1            25000                 0.05   267.12              1.07    0.91
+2            50000                 0.10   456.78              0.91    0.78
+...
+```
+
+## See Also
+
+- [V2 Tutorial](/tutorials/beginner/your-first-v2-backtest)
+- [Rebalancing Strategies](/examples/uniswap-v2/rebalancing-strategies)

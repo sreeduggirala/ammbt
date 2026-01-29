@@ -1,0 +1,49 @@
+---
+title: "Create DLMM Bin Ranges"
+description: "How to define Meteora DLMM bin ranges"
+---
+
+# Create DLMM Bin Ranges
+
+## Using Percentage Widths
+
+```python
+from ammbt.utils import generate_bin_ranges
+
+bin_ranges = generate_bin_ranges(
+    current_price=1.0,
+    bin_step=25,
+    range_widths_pct=[0.05, 0.10, 0.20],
+)
+```
+
+## With Liquidity Shapes
+
+```python
+from ammbt.utils import SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK
+
+strategies = {
+    'initial_capital': [25000],
+    'bin_lower': [-40],
+    'bin_upper': [40],
+    'liquidity_shape': [SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK],
+}
+```
+
+## Complete Strategy Grid
+
+```python
+from ammbt.utils import create_dlmm_strategy_grid
+
+strategies = create_dlmm_strategy_grid(
+    initial_capitals=[10000, 25000],
+    bin_ranges=bin_ranges,
+    liquidity_shapes=[SHAPE_SPOT, SHAPE_CURVE],
+    rebalance_thresholds=[0.0, 0.05],
+)
+```
+
+## See Also
+
+- [DLMM Tutorial](/tutorials/intermediate/meteora-dlmm-backtesting)
+- [Bin Conversions](/api-reference/utils/bin-conversions)

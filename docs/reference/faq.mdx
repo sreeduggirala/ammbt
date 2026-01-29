@@ -1,0 +1,118 @@
+---
+title: "FAQ"
+description: "Frequently asked questions about ammBT"
+---
+
+# Frequently Asked Questions
+
+## General
+
+### What is ammBT?
+
+ammBT is a high-performance, vectorized backtesting engine for AMM liquidity provider positions. It supports Uniswap V2, Uniswap V3, and Meteora DLMM protocols.
+
+### How is ammBT different from other backtesting tools?
+
+ammBT is specifically designed for LP strategies with:
+- Vectorized processing (test 1000s of strategies simultaneously)
+- Numba JIT compilation for speed
+- Accurate fee and IL calculations
+- Built-in support for multiple AMM types
+
+### Is ammBT suitable for production trading?
+
+ammBT is designed for backtesting and research. While results can inform live strategies, always validate with paper trading before risking real capital.
+
+## Technical
+
+### Why are my first backtests slow?
+
+The first run compiles Numba JIT functions. Enable caching:
+
+```python
+from ammbt.utils import Config
+Config.set("numba.cache", True)
+```
+
+### How much memory does ammBT use?
+
+Memory scales with `n_swaps × n_strategies × position_size`. Estimate:
+
+```python
+memory_gb = n_swaps * n_strategies * 80 / (1024**3)
+```
+
+For 100K swaps × 1K strategies ≈ 8 GB.
+
+### Can I use real historical data?
+
+Yes. Format your data with columns: `amount0`, `amount1`, `price`, `timestamp`. See [Working with Real Data](/tutorials/intermediate/working-with-real-data).
+
+## Strategies
+
+### How do I choose tick/bin ranges?
+
+Use helper functions:
+
+```python
+from ammbt.utils import generate_tick_ranges
+ranges = generate_tick_ranges(current_price, range_widths_pct=[0.05, 0.10, 0.20])
+```
+
+### When should I rebalance?
+
+Test different thresholds:
+- `rebalance_threshold=0.0`: Never rebalance
+- `rebalance_threshold=0.05`: Rebalance on 5% move
+- Optimal depends on volatility and gas costs
+
+### How is impermanent loss calculated?
+
+IL = LP value - Hold value. See [IL Tracking](/concepts/metrics/impermanent-loss-tracking) for details.
+
+## Results
+
+### What metrics are available?
+
+- `net_pnl` - Total profit/loss
+- `total_return_pct` - Return percentage
+- `sharpe` - Risk-adjusted return
+- `max_drawdown_pct` - Worst decline
+- `total_fees_earned` - Fee income
+- `impermanent_loss` - IL in USD
+- `time_in_position` - Time in range (V3/DLMM)
+
+### Why is my net PnL negative despite earning fees?
+
+Impermanent loss or gas costs may exceed fee income. Check:
+
+```python
+print(f"Fees: ${fees:.2f}")
+print(f"IL: ${il:.2f}")
+print(f"Gas: ${gas:.2f}")
+print(f"Net: ${fees + il - gas:.2f}")
+```
+
+## Troubleshooting
+
+### ModuleNotFoundError: No module named 'ammbt'
+
+Install ammBT:
+```bash
+pip install ammbt
+```
+
+### Numba compilation errors
+
+Update Numba and clear cache:
+```bash
+pip install --upgrade numba
+rm -rf __pycache__
+```
+
+### Out of memory errors
+
+Process in batches:
+```python
+# See /tutorials/advanced/performance-optimization
+```

@@ -1,0 +1,471 @@
+---
+title: "Performance Optimization"
+description: "Maximize backtesting speed and efficiency"
+---
+
+# Performance Optimization
+
+This tutorial covers techniques to maximize ammBT's performance for large-scale backtests. You'll learn about profiling, Numba configuration, memory management, and parallel processing.
+
+## Understanding Performance Bottlenecks
+
+### Profiling Your Backtest
+
+```python
+import cProfile
+import pstats
+import ammbt as amm
+
+def run_backtest():
+    swaps = amm.generate_swaps(n_swaps=50000, seed=42)
+    strategies = {
+        'initial_capital': [25000],
+        'tick_lower': list(range(-500, 0, 50)),
+        'tick_upper': list(range(50, 550, 50)),
+        'rebalance_threshold': [0.0, 0.05, 0.10],
+    }
+    bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+    return bt.run(swaps, strategies)
+
+# Profile
+profiler = cProfile.Profile()
+profiler.enable()
+result = run_backtest()
+profiler.disable()
+
+# Print stats
+stats = pstats.Stats(profiler)
+stats.sort_stats('cumulative')
+stats.print_stats(20)
+```
+
+### Common Bottlenecks
+
+| Bottleneck | Symptoms | Solution |
+|------------|----------|----------|
+| JIT compilation | Slow first run | Enable Numba caching |
+| Memory allocation | Increasing RAM usage | Pre-allocate arrays |
+| Python loops | Slow iteration | Vectorize with NumPy |
+| Data copying | High memory bandwidth | Use in-place operations |
+
+## Numba Configuration
+
+### Enable Caching
+
+Numba compiles functions on first use. Caching saves compiled code:
+
+```python
+from ammbt.utils import Config
+
+# Enable Numba caching (default: True)
+Config.set("numba.cache", True)
+
+# View current setting
+print(Config.get("numba.cache"))
+```
+
+### Parallel Execution
+
+Enable parallel loops for multi-core processors:
+
+```python
+# Enable parallel execution
+Config.set("numba.parallel", True)
+
+# Note: May not always be faster due to overhead
+# Test with your specific workload
+```
+
+### Fast Math
+
+Allow floating-point optimizations (slightly less precise):
+
+```python
+# Enable fast math (default: True)
+Config.set("numba.fastmath", True)
+```
+
+### Warming Up the JIT
+
+Compile functions before timing:
+
+```python
+import ammbt as amm
+import time
+
+# Warm-up run (compiles Numba functions)
+_ = amm.generate_swaps(n_swaps=100, seed=0)
+bt = amm.LPBacktester(amm_type='v3')
+_ = bt.run(amm.generate_swaps(n_swaps=100), {'initial_capital': [1000]})
+
+# Now time the actual run
+start = time.time()
+swaps = amm.generate_swaps(n_swaps=100000, seed=42)
+result = bt.run(swaps, strategies)
+print(f"Elapsed: {time.time() - start:.2f}s")
+```
+
+## Memory Management
+
+### Estimating Memory Requirements
+
+```python
+def estimate_memory(n_swaps: int, n_strategies: int, amm_type: str = 'v3') -> float:
+    """Estimate memory usage in GB."""
+
+    # Position size depends on AMM type
+    position_sizes = {
+        'v2': 72,   # bytes
+        'v3': 104,  # bytes
+        'dlmm': 112, # bytes
+    }
+
+    position_size = position_sizes.get(amm_type, 100)
+    array_bytes = n_swaps * n_strategies * position_size
+
+    # Add overhead for swap data, strategy params, etc.
+    overhead_factor = 1.5
+
+    return (array_bytes * overhead_factor) / (1024 ** 3)
+
+# Example
+memory = estimate_memory(100000, 10000, 'v3')
+print(f"Estimated memory: {memory:.1f} GB")
+```
+
+### Batch Processing for Large Workloads
+
+```python
+def batch_backtest(
+    swaps: pd.DataFrame,
+    strategies: dict,
+    batch_size: int = 1000,
+    amm_type: str = 'v3',
+    **bt_kwargs
+) -> pd.DataFrame:
+    """Run backtest in batches to manage memory."""
+
+    bt = amm.LPBacktester(amm_type=amm_type, **bt_kwargs)
+
+    # Convert to DataFrame for easier slicing
+    strat_df = pd.DataFrame({
+        k: v for k, v in strategies.items()
+    })
+
+    if isinstance(list(strategies.values())[0], list):
+        # Expand grid
+        from itertools import product
+        keys = list(strategies.keys())
+        values = list(strategies.values())
+        strat_df = pd.DataFrame(list(product(*values)), columns=keys)
+
+    all_metrics = []
+    n_strategies = len(strat_df)
+
+    for i in range(0, n_strategies, batch_size):
+        batch = strat_df.iloc[i:i + batch_size]
+        print(f"Processing batch {i//batch_size + 1}/{(n_strategies + batch_size - 1)//batch_size}")
+
+        result = bt.run(swaps, batch)
+        all_metrics.append(result.metrics)
+
+        # Force garbage collection
+        import gc
+        gc.collect()
+
+    return pd.concat(all_metrics, ignore_index=True)
+
+# Usage
+metrics = batch_backtest(swaps, strategies, batch_size=500)
+```
+
+### Memory-Efficient Data Types
+
+```python
+# Use smaller dtypes where possible
+import numpy as np
+
+# Instead of float64 for prices
+prices = swaps['price'].astype(np.float32)
+
+# Instead of int64 for timestamps
+timestamps = swaps['timestamp'].astype(np.int32)
+
+# Reduces memory by 50%
+```
+
+## Vectorization Techniques
+
+### Avoid Python Loops
+
+```python
+# Bad: Python loop
+def calculate_returns_slow(prices):
+    returns = []
+    for i in range(1, len(prices)):
+        r = (prices[i] - prices[i-1]) / prices[i-1]
+        returns.append(r)
+    return returns
+
+# Good: Vectorized
+def calculate_returns_fast(prices):
+    return np.diff(prices) / prices[:-1]
+
+# Benchmark
+prices = np.random.randn(100000)
+
+%timeit calculate_returns_slow(prices)  # ~50ms
+%timeit calculate_returns_fast(prices)  # ~0.5ms
+```
+
+### Boolean Indexing
+
+```python
+# Bad: Loop with conditions
+def filter_profitable_slow(metrics):
+    profitable = []
+    for i, row in metrics.iterrows():
+        if row['net_pnl'] > 0:
+            profitable.append(row)
+    return pd.DataFrame(profitable)
+
+# Good: Boolean indexing
+def filter_profitable_fast(metrics):
+    return metrics[metrics['net_pnl'] > 0]
+```
+
+### Vectorized Conditional Updates
+
+```python
+# Bad: Loop with conditional assignment
+for i in range(len(positions)):
+    if should_rebalance[i]:
+        positions[i] = new_positions[i]
+
+# Good: np.where
+positions = np.where(
+    should_rebalance[:, np.newaxis],
+    new_positions,
+    positions
+)
+```
+
+## Parallel Processing
+
+### Multi-Process Backtesting
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
+
+def run_single_backtest(args):
+    """Worker function for parallel processing."""
+    swaps_path, strategies, amm_type, bt_kwargs = args
+
+    # Load swaps in worker (avoid serialization)
+    swaps = pd.read_parquet(swaps_path)
+
+    bt = amm.LPBacktester(amm_type=amm_type, **bt_kwargs)
+    result = bt.run(swaps, strategies)
+    return result.metrics
+
+def parallel_backtest(
+    swaps: pd.DataFrame,
+    strategies: dict,
+    n_workers: int = None,
+    amm_type: str = 'v3',
+    **bt_kwargs
+) -> pd.DataFrame:
+    """Run backtest across multiple processes."""
+
+    if n_workers is None:
+        n_workers = mp.cpu_count()
+
+    # Save swaps to temp file (workers will load it)
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix='.parquet', delete=False) as f:
+        swaps.to_parquet(f.name)
+        swaps_path = f.name
+
+    # Split strategies
+    strat_df = expand_strategy_grid(strategies)
+    chunk_size = len(strat_df) // n_workers + 1
+
+    chunks = []
+    for i in range(n_workers):
+        start = i * chunk_size
+        end = min(start + chunk_size, len(strat_df))
+        if start < len(strat_df):
+            chunk_strat = strat_df.iloc[start:end].to_dict('list')
+            chunks.append((swaps_path, chunk_strat, amm_type, bt_kwargs))
+
+    # Run in parallel
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        results = list(executor.map(run_single_backtest, chunks))
+
+    # Clean up
+    import os
+    os.unlink(swaps_path)
+
+    return pd.concat(results, ignore_index=True)
+```
+
+### Async Data Loading
+
+```python
+import asyncio
+import aiofiles
+
+async def load_swaps_async(filepath: str) -> pd.DataFrame:
+    """Load swap data asynchronously."""
+    async with aiofiles.open(filepath, 'rb') as f:
+        content = await f.read()
+    return pd.read_parquet(io.BytesIO(content))
+
+async def load_multiple_pools(filepaths: list) -> list:
+    """Load multiple pool data in parallel."""
+    tasks = [load_swaps_async(fp) for fp in filepaths]
+    return await asyncio.gather(*tasks)
+
+# Usage
+filepaths = ['pool1.parquet', 'pool2.parquet', 'pool3.parquet']
+pools_data = asyncio.run(load_multiple_pools(filepaths))
+```
+
+## Caching Strategies
+
+### Results Caching
+
+```python
+import hashlib
+import pickle
+from pathlib import Path
+
+def get_cache_key(swaps, strategies, bt_kwargs):
+    """Generate unique cache key."""
+    data = pickle.dumps({
+        'swaps_hash': hashlib.md5(swaps.to_json().encode()).hexdigest(),
+        'strategies': strategies,
+        'bt_kwargs': bt_kwargs,
+    })
+    return hashlib.md5(data).hexdigest()
+
+def cached_backtest(
+    swaps: pd.DataFrame,
+    strategies: dict,
+    cache_dir: str = '.cache',
+    **bt_kwargs
+) -> BacktestResult:
+    """Run backtest with result caching."""
+
+    cache_path = Path(cache_dir)
+    cache_path.mkdir(exist_ok=True)
+
+    cache_key = get_cache_key(swaps, strategies, bt_kwargs)
+    cache_file = cache_path / f"{cache_key}.pkl"
+
+    if cache_file.exists():
+        print("Loading from cache...")
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+
+    # Run backtest
+    bt = amm.LPBacktester(**bt_kwargs)
+    result = bt.run(swaps, strategies)
+
+    # Cache result
+    with open(cache_file, 'wb') as f:
+        pickle.dump(result, f)
+
+    return result
+```
+
+## Benchmarking
+
+### Comprehensive Benchmark
+
+```python
+import time
+import ammbt as amm
+
+def benchmark_ammbt():
+    """Comprehensive performance benchmark."""
+
+    results = []
+
+    for n_swaps in [1000, 10000, 50000, 100000]:
+        for n_strategies in [10, 100, 500, 1000]:
+            swaps = amm.generate_swaps(n_swaps=n_swaps, seed=42)
+            strategies = {
+                'initial_capital': [25000] * n_strategies,
+                'tick_lower': [-200] * n_strategies,
+                'tick_upper': [200] * n_strategies,
+            }
+
+            bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+
+            start = time.time()
+            result = bt.run(swaps, strategies)
+            elapsed = time.time() - start
+
+            results.append({
+                'n_swaps': n_swaps,
+                'n_strategies': n_strategies,
+                'time_sec': elapsed,
+                'swaps_per_sec': n_swaps / elapsed,
+                'strategies_per_sec': n_strategies / elapsed,
+            })
+
+            print(f"Swaps={n_swaps}, Strategies={n_strategies}: {elapsed:.2f}s")
+
+    return pd.DataFrame(results)
+
+# Run benchmark
+benchmark_df = benchmark_ammbt()
+print(benchmark_df)
+```
+
+## Performance Checklist
+
+<Check>
+Enable Numba caching to avoid recompilation
+</Check>
+
+<Check>
+Warm up JIT before timing measurements
+</Check>
+
+<Check>
+Use batch processing for large strategy sets
+</Check>
+
+<Check>
+Pre-allocate arrays when possible
+</Check>
+
+<Check>
+Use vectorized operations instead of Python loops
+</Check>
+
+<Check>
+Consider parallel processing for independent tasks
+</Check>
+
+<Check>
+Cache expensive computations
+</Check>
+
+<Check>
+Profile before optimizing to find real bottlenecks
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Multi-Pool Analysis" icon="diagram-project" href="/tutorials/advanced/multi-pool-analysis">
+    Analyze across multiple pools simultaneously
+  </Card>
+  <Card title="Live Streaming" icon="satellite-dish" href="/tutorials/advanced/live-swap-streaming">
+    Connect to real-time data feeds
+  </Card>
+</CardGroup>

@@ -1,0 +1,150 @@
+---
+title: "Introduction"
+description: "High-performance vectorized backtesting for AMM liquidity provider positions"
+---
+
+# Welcome to ammBT
+
+**ammBT** (AMM Backtesting Engine) is a high-performance, vectorized backtesting framework for testing liquidity provider strategies across multiple Automated Market Maker (AMM) protocols.
+
+<img
+  src="/images/hero-banner.png"
+  alt="ammBT Performance Dashboard"
+  className="rounded-lg"
+/>
+
+## Why ammBT?
+
+Providing liquidity to AMMs is complex. You need to:
+
+- Choose the right price ranges (for concentrated liquidity)
+- Decide when to rebalance positions
+- Balance fee earnings against impermanent loss
+- Test strategies across different market conditions
+
+**ammBT** makes this easy with:
+
+<CardGroup cols={2}>
+  <Card title="Vectorized Performance" icon="bolt">
+    Test thousands of strategy combinations in seconds using NumPy vectorization and Numba JIT compilation.
+  </Card>
+  <Card title="Multi-Protocol Support" icon="layer-group">
+    Support for Uniswap V2 (CPAMM), Uniswap V3 (CLMM), and Meteora DLMM with consistent APIs.
+  </Card>
+  <Card title="Realistic Simulation" icon="chart-line">
+    Accurate fee calculations, gas costs, and rebalancing logic matching on-chain behavior.
+  </Card>
+  <Card title="Rich Analytics" icon="magnifying-glass-chart">
+    Built-in metrics for PnL, impermanent loss, Sharpe ratio, and capital efficiency.
+  </Card>
+</CardGroup>
+
+## Supported Protocols
+
+| Protocol | Type | Chains | Description |
+|----------|------|--------|-------------|
+| **Uniswap V2** | CPAMM | Ethereum, Arbitrum, Polygon | Constant product AMM with full-range liquidity |
+| **Uniswap V3** | CLMM | Ethereum, Arbitrum, Polygon, Base | Concentrated liquidity with tick-based ranges |
+| **Meteora DLMM** | DLMM | Solana | Dynamic liquidity with bin-based ranges and variable fees |
+
+## Key Features
+
+### Vectorized Strategy Testing
+
+ammBT processes strategies in parallel using NumPy arrays. Instead of looping through each strategy sequentially, the engine:
+
+1. Creates a position state array of shape `(n_swaps, n_strategies)`
+2. Processes all swaps across all strategies simultaneously
+3. Achieves O(swaps) complexity regardless of strategy count
+
+```python
+# Test 1000+ strategies in one call
+strategies = create_v3_strategy_grid(
+    initial_capitals=[10000, 25000, 50000],
+    tick_ranges=generate_tick_ranges(num_ranges=20),
+    rebalance_thresholds=[0.0, 0.05, 0.10, 0.15],
+    rebalance_frequencies=[0, 100, 500],
+)
+
+result = backtester.run(swaps, strategies)  # All strategies run together
+```
+
+### Numba JIT Compilation
+
+Critical math functions are compiled to machine code using Numba:
+
+- Price-to-tick conversions
+- Liquidity calculations
+- Fee accumulation logic
+- Position state updates
+
+### Flexible Data Sources
+
+- **Synthetic data**: Generate realistic swap sequences with configurable volatility
+- **Historical data**: Load from Uniswap subgraphs, Dune Analytics, or custom sources
+- **Live data**: Stream real-time swaps for paper trading
+
+### Interactive Visualizations
+
+Built-in Plotly charts for:
+
+- Portfolio performance over time
+- Parameter sensitivity heatmaps
+- Risk-return efficient frontiers
+- PnL distribution analysis
+
+## Quick Example
+
+```python
+import ammbt as amm
+
+# Generate synthetic swap data
+swaps = amm.generate_swaps(
+    n_swaps=5000,
+    price_volatility=0.03,
+    seed=42
+)
+
+# Define strategies to test
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': [-200, -400, -800],
+    'tick_upper': [200, 400, 800],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+
+# Run backtest
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+result = bt.run(swaps, strategies)
+
+# Analyze results
+print(result.summary())
+
+# Visualize
+fig = amm.plot_performance(result, strategy_idx=0)
+fig.show()
+```
+
+## Who Should Use ammBT?
+
+- **LP Strategists** testing position management approaches
+- **Quant Researchers** analyzing AMM dynamics
+- **Protocol Teams** evaluating liquidity incentives
+- **DeFi Developers** building LP management tools
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Install ammBT and verify your setup
+  </Card>
+  <Card title="Quickstart" icon="play" href="/getting-started/quickstart">
+    Run your first backtest in 5 minutes
+  </Card>
+  <Card title="Tutorials" icon="graduation-cap" href="/tutorials/beginner/understanding-amms">
+    Learn AMM concepts and backtesting techniques
+  </Card>
+  <Card title="Examples" icon="code" href="/examples/gallery">
+    Browse complete example notebooks
+  </Card>
+</CardGroup>

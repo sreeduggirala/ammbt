@@ -1,0 +1,121 @@
+---
+title: "Examples Gallery"
+description: "Browse complete ammBT example implementations"
+---
+
+# Examples Gallery
+
+Explore complete, runnable examples organized by topic and complexity.
+
+## Uniswap V2 Examples
+
+<CardGroup cols={2}>
+  <Card title="Basic Backtest" icon="play" href="/examples/uniswap-v2/basic-backtest">
+    Simple V2 backtest with synthetic data
+  </Card>
+  <Card title="Rebalancing Strategies" icon="rotate" href="/examples/uniswap-v2/rebalancing-strategies">
+    Compare different rebalancing approaches
+  </Card>
+  <Card title="Parameter Optimization" icon="sliders" href="/examples/uniswap-v2/parameter-optimization">
+    Grid search for optimal parameters
+  </Card>
+  <Card title="Real Data Analysis" icon="database" href="/examples/uniswap-v2/real-data-analysis">
+    Backtest with historical data
+  </Card>
+</CardGroup>
+
+## Uniswap V3 Examples
+
+<CardGroup cols={2}>
+  <Card title="Concentrated Liquidity" icon="arrows-left-right-to-line" href="/examples/uniswap-v3/concentrated-liquidity">
+    Understanding V3 tick ranges
+  </Card>
+  <Card title="Range Strategies" icon="chart-mixed" href="/examples/uniswap-v3/range-strategies">
+    Compare narrow vs wide ranges
+  </Card>
+  <Card title="Fee Tier Comparison" icon="percent" href="/examples/uniswap-v3/fee-tier-comparison">
+    0.05% vs 0.3% vs 1% tiers
+  </Card>
+  <Card title="Out-of-Range Analysis" icon="arrow-right-from-bracket" href="/examples/uniswap-v3/out-of-range-analysis">
+    Handling out-of-range positions
+  </Card>
+</CardGroup>
+
+## Meteora DLMM Examples
+
+<CardGroup cols={2}>
+  <Card title="Basic DLMM" icon="grid-2" href="/examples/meteora-dlmm/basic-dlmm">
+    Introduction to DLMM backtesting
+  </Card>
+  <Card title="Liquidity Shapes" icon="shapes" href="/examples/meteora-dlmm/liquidity-shapes">
+    Spot vs Curve vs Bid-Ask
+  </Card>
+  <Card title="Dynamic Fees" icon="bolt" href="/examples/meteora-dlmm/dynamic-fees">
+    Understanding volatility-based fees
+  </Card>
+  <Card title="Solana Pools" icon="sun" href="/examples/meteora-dlmm/solana-pools">
+    Real Solana pool analysis
+  </Card>
+</CardGroup>
+
+## Advanced Examples
+
+<CardGroup cols={2}>
+  <Card title="Cross-AMM Comparison" icon="code-compare" href="/examples/advanced/cross-amm-comparison">
+    V2 vs V3 vs DLMM comparison
+  </Card>
+  <Card title="Monte Carlo Simulation" icon="dice" href="/examples/advanced/monte-carlo-simulation">
+    Statistical strategy analysis
+  </Card>
+  <Card title="Custom Metrics" icon="calculator" href="/examples/advanced/custom-metrics">
+    Implement custom performance metrics
+  </Card>
+  <Card title="Production Pipeline" icon="industry" href="/examples/advanced/production-pipeline">
+    End-to-end backtesting workflow
+  </Card>
+</CardGroup>
+
+## Quick Start Example
+
+```python
+import ammbt as amm
+
+# 1. Generate data
+swaps = amm.generate_swaps(n_swaps=10000, price_volatility=0.02, seed=42)
+
+# 2. Define strategies
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': [-200, -400],
+    'tick_upper': [200, 400],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+
+# 3. Run backtest
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+result = bt.run(swaps, strategies)
+
+# 4. Analyze
+print("Top 5 Strategies:")
+print(result.summary().head())
+
+# 5. Visualize
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+## Running Examples
+
+All examples can be run as Python scripts or Jupyter notebooks:
+
+```bash
+# Clone repository
+git clone https://github.com/your-org/ammbt.git
+cd ammbt/examples
+
+# Run script
+python uniswap_v3/concentrated_liquidity.py
+
+# Or open notebook
+jupyter lab uniswap_v3/concentrated_liquidity.ipynb
+```

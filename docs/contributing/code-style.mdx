@@ -1,0 +1,119 @@
+---
+title: "Code Style"
+description: "Coding standards for ammBT"
+---
+
+# Code Style
+
+## Python Style
+
+ammBT follows PEP 8 with some additions.
+
+### Formatting
+
+Use Black for formatting:
+
+```bash
+black ammbt/
+```
+
+Configuration (pyproject.toml):
+```toml
+[tool.black]
+line-length = 100
+target-version = ['py39']
+```
+
+### Linting
+
+Use Ruff:
+
+```bash
+ruff check ammbt/
+```
+
+### Type Hints
+
+All public functions must have type hints:
+
+```python
+def calculate_il(
+    initial_price: float,
+    final_price: float,
+) -> float:
+    """Calculate impermanent loss."""
+    ratio = final_price / initial_price
+    return 2 * np.sqrt(ratio) / (1 + ratio) - 1
+```
+
+### Docstrings
+
+Use Google style:
+
+```python
+def generate_swaps(
+    n_swaps: int = 10000,
+    initial_price: float = 1.0,
+) -> pd.DataFrame:
+    """Generate synthetic swap data.
+
+    Args:
+        n_swaps: Number of swap events.
+        initial_price: Starting price.
+
+    Returns:
+        DataFrame with swap data.
+
+    Example:
+        >>> swaps = generate_swaps(n_swaps=1000)
+        >>> len(swaps)
+        1000
+    """
+```
+
+### Imports
+
+Order:
+1. Standard library
+2. Third-party
+3. Local
+
+```python
+import math
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+from ammbt.utils import Config
+```
+
+## Numba Functions
+
+```python
+from numba import njit
+
+@njit(cache=True)
+def fast_function(x: float) -> float:
+    """Numba-compiled function."""
+    return x ** 2
+```
+
+## Testing
+
+- Test file: `tests/test_<module>.py`
+- Test function: `test_<feature>`
+- Use pytest fixtures
+
+```python
+import pytest
+
+@pytest.fixture
+def sample_swaps():
+    return generate_swaps(n_swaps=100, seed=42)
+
+def test_backtest_runs(sample_swaps):
+    bt = LPBacktester()
+    result = bt.run(sample_swaps, {'initial_capital': [10000]})
+    assert len(result.metrics) == 1
+```

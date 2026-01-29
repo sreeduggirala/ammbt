@@ -1,0 +1,192 @@
+---
+title: "BacktestResult"
+description: "Container for backtest results, metrics, and analysis"
+---
+
+# BacktestResult
+
+Container class for backtest results, providing access to metrics, position history, and analysis methods.
+
+## Attributes
+
+### metrics
+
+DataFrame containing calculated performance metrics for all strategies.
+
+```python
+result.metrics  # pd.DataFrame
+```
+
+**Columns:**
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `initial_capital` | float | Capital provided |
+| `tick_lower` | int | Lower tick (V3) |
+| `tick_upper` | int | Upper tick (V3) |
+| `bin_lower` | int | Lower bin (DLMM) |
+| `bin_upper` | int | Upper bin (DLMM) |
+| `rebalance_threshold` | float | Rebalance trigger |
+| `rebalance_frequency` | int | Min swaps between rebalances |
+| `net_pnl` | float | Net profit/loss |
+| `total_return_pct` | float | Return as percentage |
+| `sharpe` | float | Sharpe ratio |
+| `max_drawdown_pct` | float | Maximum drawdown |
+| `total_fees_earned` | float | Fee income |
+| `impermanent_loss` | float | IL in USD |
+| `num_rebalances` | int | Rebalance count |
+| `gas_spent` | float | Gas costs |
+| `time_in_position` | float | Time in range (%) |
+
+### positions
+
+NumPy structured array containing full position state history.
+
+```python
+result.positions  # np.ndarray, shape: (n_swaps + 1, n_strategies)
+```
+
+### strategy_params
+
+DataFrame of input strategy parameters.
+
+```python
+result.strategy_params  # pd.DataFrame
+```
+
+### metadata
+
+Dictionary with simulation metadata.
+
+```python
+result.metadata  # dict
+```
+
+**Contents:**
+- Pool state history
+- Initial parameters
+- Timestamp range
+
+## Methods
+
+### summary()
+
+Get strategies sorted by net PnL.
+
+```python
+def summary(self, top_n: int = None) -> pd.DataFrame
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `top_n` | int | None | Limit to top N strategies |
+
+**Returns:** DataFrame sorted by `net_pnl` descending.
+
+**Example:**
+
+```python
+# Top 10 strategies
+top_10 = result.summary(top_n=10)
+print(top_10)
+```
+
+### get_position_history()
+
+Get detailed position history for a specific strategy.
+
+```python
+def get_position_history(self, strategy_idx: int) -> pd.DataFrame
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `strategy_idx` | int | Strategy index (row in metrics) |
+
+**Returns:** DataFrame with position state at each swap.
+
+**Columns:**
+
+| Column | Description |
+|--------|-------------|
+| `liquidity` | LP tokens or liquidity amount |
+| `token0_balance` | Token0 holdings |
+| `token1_balance` | Token1 holdings |
+| `uncollected_fees_0` | Accumulated token0 fees |
+| `uncollected_fees_1` | Accumulated token1 fees |
+| `gas_spent` | Cumulative gas costs |
+| `is_active` | Position is open |
+| `is_in_range` | Currently earning fees (V3/DLMM) |
+| `num_rebalances` | Rebalance count to this point |
+
+**Example:**
+
+```python
+# Get history for best strategy
+best_idx = result.summary().index[0]
+history = result.get_position_history(best_idx)
+
+# Calculate portfolio value
+prices = swaps['price'].values
+portfolio_value = (
+    history['token0_balance'] * prices +
+    history['token1_balance']
+)
+```
+
+## Usage Examples
+
+### Basic Analysis
+
+```python
+result = bt.run(swaps, strategies)
+
+# View all metrics
+print(result.metrics)
+
+# Get top strategies
+print(result.summary(top_n=5))
+
+# Filter profitable
+profitable = result.metrics[result.metrics['net_pnl'] > 0]
+```
+
+### Detailed Strategy Analysis
+
+```python
+# Best strategy
+best_idx = result.summary().index[0]
+best_metrics = result.metrics.loc[best_idx]
+
+print(f"Best Strategy:")
+print(f"  Capital: ${best_metrics['initial_capital']:,.0f}")
+print(f"  Return: {best_metrics['total_return_pct']:.2f}%")
+print(f"  Sharpe: {best_metrics['sharpe']:.2f}")
+
+# Position history
+history = result.get_position_history(best_idx)
+print(f"\nFinal State:")
+print(history.iloc[-1])
+```
+
+### Visualization
+
+```python
+# Use with plotting functions
+import ammbt as amm
+
+fig = amm.plot_performance(result, strategy_idx=best_idx)
+fig.show()
+
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+## See Also
+
+- [LPBacktester](/api-reference/core/lpbacktester) - Create backtests
+- [plot_performance](/api-reference/plotting/plot-performance) - Visualize results

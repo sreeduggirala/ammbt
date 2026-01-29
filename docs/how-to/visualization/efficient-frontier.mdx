@@ -1,0 +1,63 @@
+---
+title: "Efficient Frontier"
+description: "Create risk-return scatter plots"
+---
+
+# Efficient Frontier
+
+## Basic Plot
+
+```python
+import ammbt as amm
+
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+## Custom Metrics
+
+```python
+fig = amm.plot_efficient_frontier(
+    result,
+    risk_metric='num_rebalances',
+    return_metric='net_pnl'
+)
+fig.update_layout(
+    xaxis_title='Rebalance Count',
+    yaxis_title='Net PnL ($)'
+)
+fig.show()
+```
+
+## Identify Frontier Strategies
+
+```python
+from scipy.spatial import ConvexHull
+import numpy as np
+
+points = result.metrics[['max_drawdown_pct', 'total_return_pct']].values
+hull = ConvexHull(points)
+frontier_indices = hull.vertices
+
+print(f"Strategies on frontier: {frontier_indices.tolist()}")
+```
+
+## Highlight Best Strategy
+
+```python
+fig = amm.plot_efficient_frontier(result)
+
+best = result.summary().iloc[0]
+fig.add_trace(go.Scatter(
+    x=[best['max_drawdown_pct']],
+    y=[best['total_return_pct']],
+    mode='markers',
+    marker=dict(size=20, symbol='star', color='gold'),
+    name='Best'
+))
+fig.show()
+```
+
+## See Also
+
+- [plot_efficient_frontier API](/api-reference/plotting/plot-efficient-frontier)

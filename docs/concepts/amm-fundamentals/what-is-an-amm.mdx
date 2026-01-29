@@ -1,0 +1,234 @@
+---
+title: "What is an AMM?"
+description: "Understanding Automated Market Makers and their role in DeFi"
+---
+
+# What is an AMM?
+
+An **Automated Market Maker (AMM)** is a type of decentralized exchange (DEX) protocol that uses mathematical formulas to determine asset prices and facilitate trades, rather than using traditional order books.
+
+## Traditional Exchanges vs. AMMs
+
+### Order Book Exchanges
+
+Traditional exchanges (CEXs like Binance, NYSE) use order books:
+
+```
+Buy Orders (Bids)          Sell Orders (Asks)
+$99.50 - 100 units         $100.50 - 50 units
+$99.00 - 200 units         $101.00 - 100 units
+$98.50 - 150 units         $101.50 - 75 units
+```
+
+- **Makers** place limit orders
+- **Takers** execute against existing orders
+- Price discovery through supply/demand
+
+### AMM Exchanges
+
+AMMs use **liquidity pools** and **bonding curves**:
+
+```
+Pool: 1000 ETH + 2,000,000 USDC
+
+Price = USDC Reserve / ETH Reserve = 2000 USDC/ETH
+
+Bonding curve: x * y = k
+```
+
+- **Liquidity Providers (LPs)** deposit tokens
+- **Traders** swap against the pool
+- Price determined algorithmically
+
+## How AMMs Work
+
+### The Liquidity Pool
+
+A liquidity pool contains reserves of two (or more) tokens:
+
+```python
+# Simple pool example
+pool = {
+    'token_a': 1000,    # ETH
+    'token_b': 2000000, # USDC
+}
+
+# Price is the ratio
+price = pool['token_b'] / pool['token_a']  # 2000 USDC per ETH
+```
+
+### The Bonding Curve
+
+The bonding curve determines how prices change with trades. Different curves have different properties:
+
+#### Constant Product (x * y = k)
+
+Used by Uniswap V2, SushiSwap:
+
+$$x \cdot y = k$$
+
+- Price changes with every trade
+- Infinite liquidity (theoretically)
+- Higher slippage for larger trades
+
+#### Constant Sum (x + y = k)
+
+Used for stable pairs:
+
+$$x + y = k$$
+
+- Price remains fixed
+- Limited liquidity
+- Zero slippage until depleted
+
+#### Concentrated Liquidity
+
+Used by Uniswap V3, Meteora:
+
+- Liquidity concentrated in specific price ranges
+- Higher capital efficiency
+- Requires active management
+
+## The Swap Process
+
+When a trader swaps tokens:
+
+```python
+# Initial state
+x = 1000  # ETH in pool
+y = 2000000  # USDC in pool
+k = x * y  # = 2,000,000,000
+
+# Trader wants to buy 10 ETH with USDC
+# New ETH in pool after trade
+x_new = 1000 - 10  # = 990 ETH
+
+# Calculate USDC needed to maintain k
+y_new = k / x_new  # = 2,020,202 USDC
+
+# Trader pays (ignoring fees)
+usdc_paid = y_new - y  # = 20,202 USDC
+effective_price = usdc_paid / 10  # = 2020.2 USDC/ETH
+```
+
+### Slippage
+
+The difference between expected and actual price:
+
+$$\text{Slippage} = \frac{\text{Actual Price} - \text{Expected Price}}{\text{Expected Price}}$$
+
+For our example:
+- Expected: 2000 USDC/ETH
+- Actual: 2020.2 USDC/ETH
+- Slippage: 1.01%
+
+## The Liquidity Provider
+
+### Providing Liquidity
+
+LPs deposit tokens and receive **LP tokens** representing their share:
+
+```python
+# LP deposits
+deposit_a = 10  # ETH
+deposit_b = 20000  # USDC (at current price)
+
+# Receive LP tokens
+total_pool_value = 2 * pool['token_a'] * price  # Total pool value
+deposit_value = 2 * deposit_a * price
+lp_tokens = deposit_value / total_pool_value * total_lp_supply
+```
+
+### Earning Fees
+
+LPs earn a percentage of every swap:
+
+| Protocol | Fee |
+|----------|-----|
+| Uniswap V2 | 0.30% |
+| Uniswap V3 | 0.05%, 0.30%, or 1.00% |
+| Curve | 0.04% |
+| Meteora | Dynamic |
+
+Fees are distributed proportionally to LP share:
+
+$$\text{Your Fees} = \text{Total Fees} \times \frac{\text{Your LP Tokens}}{\text{Total LP Tokens}}$$
+
+### Impermanent Loss
+
+When prices change, LP positions experience **impermanent loss** compared to simply holding:
+
+```python
+# Initial: 50% ETH, 50% USDC
+# If ETH price doubles:
+
+# Holding strategy
+hold_value = eth_amount * new_price + usdc_amount
+
+# LP strategy (due to rebalancing)
+lp_value = sqrt(new_price/old_price) * 2 * initial_usd_value / (1 + new_price/old_price)
+
+# IL = LP value / Hold value - 1
+```
+
+## AMM Types in ammBT
+
+### 1. Constant Product (CPAMM) - Uniswap V2
+
+- Simple, battle-tested
+- Full range liquidity
+- Lower capital efficiency
+
+### 2. Concentrated Liquidity (CLMM) - Uniswap V3
+
+- Custom price ranges
+- Up to 4000x more capital efficient
+- Requires active management
+
+### 3. Dynamic Liquidity (DLMM) - Meteora
+
+- Discrete price bins
+- Dynamic fee adjustment
+- Multiple liquidity shapes
+
+## Why Backtest LP Strategies?
+
+Providing liquidity involves trade-offs:
+
+| Factor | Risk | Reward |
+|--------|------|--------|
+| Fee income | None | Proportional to volume |
+| Impermanent loss | Price divergence | None |
+| Gas costs | Rebalancing | None |
+| Opportunity cost | Capital locked | None |
+
+Backtesting helps optimize these trade-offs by testing strategies on historical or synthetic data.
+
+## Key Takeaways
+
+<Check>
+AMMs use mathematical formulas instead of order books
+</Check>
+
+<Check>
+Liquidity providers deposit tokens and earn trading fees
+</Check>
+
+<Check>
+Impermanent loss occurs when prices change
+</Check>
+
+<Check>
+Different AMM types offer different trade-offs
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="CPAMM (V2)" icon="circle" href="/concepts/amm-fundamentals/cpamm-uniswap-v2">
+    Learn about constant product AMMs
+  </Card>
+  <Card title="CLMM (V3)" icon="arrows-left-right-to-line" href="/concepts/amm-fundamentals/clmm-uniswap-v3">
+    Understand concentrated liquidity
+  </Card>
+</CardGroup>

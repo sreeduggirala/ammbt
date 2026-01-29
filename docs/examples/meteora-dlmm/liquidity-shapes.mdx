@@ -1,0 +1,55 @@
+---
+title: "DLMM Liquidity Shapes"
+description: "Compare Spot, Curve, and Bid-Ask shapes"
+---
+
+# DLMM Liquidity Shapes
+
+Compare the three liquidity distribution shapes.
+
+```python
+import ammbt as amm
+from ammbt.utils import SHAPE_SPOT, SHAPE_CURVE, SHAPE_BID_ASK
+import pandas as pd
+
+# Generate data
+swaps = amm.generate_swaps(
+    n_swaps=15000,
+    initial_price=1.0,
+    price_volatility=0.03,
+    seed=42
+)
+
+# Test each shape
+bt = amm.LPBacktester(amm_type='dlmm', bin_step=25, initial_price=1.0)
+
+results = {}
+shape_names = {0: 'Spot', 1: 'Curve', 2: 'Bid-Ask'}
+
+for shape_id, name in shape_names.items():
+    result = bt.run(swaps, {
+        'initial_capital': [25000],
+        'bin_lower': [-40],
+        'bin_upper': [40],
+        'liquidity_shape': [shape_id],
+        'rebalance_threshold': [0.0],
+    })
+    results[name] = result.metrics.iloc[0]
+
+# Compare
+comparison = pd.DataFrame(results).T
+print("Liquidity Shape Comparison:")
+print(comparison[['net_pnl', 'total_fees_earned', 'sharpe', 'time_in_position']])
+```
+
+## Shape Descriptions
+
+| Shape | Distribution | Best For |
+|-------|-------------|----------|
+| Spot | Uniform | Wide ranges, market making |
+| Curve | Concentrated | Range-bound, max fees |
+| Bid-Ask | At edges | DCA, breakout expectation |
+
+## See Also
+
+- [DLMM Concepts](/concepts/amm-fundamentals/dlmm-meteora)

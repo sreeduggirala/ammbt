@@ -1,0 +1,377 @@
+---
+title: "Basic Plotting"
+description: "Visualize backtest results with ammBT's built-in charts"
+---
+
+# Basic Plotting
+
+ammBT includes four built-in visualization functions powered by Plotly. These charts help you understand strategy performance, compare alternatives, and communicate results.
+
+## Overview of Plotting Functions
+
+| Function | Purpose |
+|----------|---------|
+| `plot_performance()` | Time-series of portfolio value and fees |
+| `plot_metrics_heatmap()` | 2D parameter sensitivity analysis |
+| `plot_efficient_frontier()` | Risk vs. return scatter plot |
+| `plot_pnl_distribution()` | Histogram of PnL across strategies |
+
+## Setup
+
+```python
+import ammbt as amm
+
+# Generate data and run backtest
+swaps = amm.generate_swaps(n_swaps=5000, price_volatility=0.02, seed=42)
+
+strategies = {
+    'initial_capital': [10000, 25000, 50000],
+    'tick_lower': [-200, -400, -600],
+    'tick_upper': [200, 400, 600],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+result = bt.run(swaps, strategies)
+```
+
+## 1. Performance Plot
+
+Shows a single strategy's performance over time.
+
+```python
+fig = amm.plot_performance(result, strategy_idx=0)
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/plot-performance.png" alt="Performance Plot" />
+</Frame>
+
+### Subplots Explained
+
+1. **Portfolio Value**: Total value of position over time
+2. **Uncollected Fees**: Accumulated trading fees (token0 and token1)
+3. **Pool Reserves**: (Optional) Reserve levels over time
+
+### Options
+
+```python
+# Hide reserves subplot
+fig = amm.plot_performance(result, strategy_idx=0, show_reserves=False)
+
+# View different strategy
+best_idx = result.summary().index[0]
+fig = amm.plot_performance(result, strategy_idx=best_idx)
+```
+
+### Customization
+
+Since ammBT returns Plotly figures, you can customize them:
+
+```python
+fig = amm.plot_performance(result, strategy_idx=0)
+
+# Customize layout
+fig.update_layout(
+    title='ETH-USDC Position Performance',
+    template='plotly_dark',
+    height=800,
+)
+
+# Add annotations
+fig.add_annotation(
+    x=1000,
+    y=10500,
+    text="Rebalance Event",
+    showarrow=True,
+    arrowhead=1,
+)
+
+fig.show()
+```
+
+## 2. Metrics Heatmap
+
+Visualize how a metric varies across two strategy parameters.
+
+```python
+fig = amm.plot_metrics_heatmap(
+    result,
+    x_param='tick_upper',
+    y_param='tick_lower',
+    metric='total_return_pct'
+)
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/plot-heatmap.png" alt="Metrics Heatmap" />
+</Frame>
+
+### Available Metrics
+
+Any column in `result.metrics` can be used:
+
+```python
+# Common metrics
+metrics = ['net_pnl', 'total_return_pct', 'sharpe',
+           'max_drawdown_pct', 'total_fees_earned']
+
+for metric in metrics:
+    fig = amm.plot_metrics_heatmap(result, 'tick_upper', 'tick_lower', metric)
+    fig.update_layout(title=f'{metric} Heatmap')
+    fig.show()
+```
+
+### Interpreting the Heatmap
+
+- **Dark colors**: Low values
+- **Bright colors**: High values
+- **Patterns**: Show how parameters interact
+
+Example insights:
+- "Wide ranges (high tick_upper, low tick_lower) have stable but lower returns"
+- "Narrow ranges have higher variance - some perform very well, others poorly"
+
+### Multi-Parameter Analysis
+
+When you have more than 2 variable parameters, filter first:
+
+```python
+# Focus on strategies with specific capital
+subset = result.metrics[result.metrics['initial_capital'] == 25000].copy()
+
+# Create heatmap for this subset
+import plotly.express as px
+
+pivot = subset.pivot_table(
+    values='sharpe',
+    index='tick_lower',
+    columns='tick_upper',
+)
+
+fig = px.imshow(
+    pivot,
+    labels=dict(x='Tick Upper', y='Tick Lower', color='Sharpe'),
+    title='Sharpe Ratio (Capital = $25,000)'
+)
+fig.show()
+```
+
+## 3. Efficient Frontier
+
+Scatter plot showing risk-return tradeoff across all strategies.
+
+```python
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/plot-frontier.png" alt="Efficient Frontier" />
+</Frame>
+
+### Understanding the Plot
+
+- **X-axis**: Risk metric (default: max drawdown)
+- **Y-axis**: Return metric (default: total return %)
+- **Color**: Sharpe ratio (brighter = better risk-adjusted returns)
+
+### Identifying the Efficient Frontier
+
+The "efficient frontier" consists of strategies that offer the best return for a given level of risk:
+
+```python
+# Strategies on the frontier have no other strategy that is:
+# - Higher return with same or lower risk, OR
+# - Same return with lower risk
+
+# Find frontier strategies
+from scipy.spatial import ConvexHull
+import numpy as np
+
+points = result.metrics[['max_drawdown_pct', 'total_return_pct']].values
+hull = ConvexHull(points)
+frontier_indices = hull.vertices
+
+print(f"Frontier strategies: {frontier_indices.tolist()}")
+```
+
+### Custom Metrics
+
+```python
+# Use different risk/return metrics
+fig = amm.plot_efficient_frontier(
+    result,
+    risk_metric='num_rebalances',  # More rebalances = more risk
+    return_metric='net_pnl'
+)
+fig.update_layout(
+    xaxis_title='Number of Rebalances',
+    yaxis_title='Net PnL ($)'
+)
+fig.show()
+```
+
+## 4. PnL Distribution
+
+Histogram showing the distribution of PnL across all strategies.
+
+```python
+fig = amm.plot_pnl_distribution(result)
+fig.show()
+```
+
+<Frame>
+  <img src="/images/tutorials/plot-pnl-dist.png" alt="PnL Distribution" />
+</Frame>
+
+### Interpreting the Distribution
+
+- **Center**: Mean performance across strategies
+- **Spread**: How much performance varies
+- **Skew**: Whether extreme results are positive or negative
+
+```python
+import numpy as np
+
+pnl = result.metrics['net_pnl']
+print(f"Mean PnL: ${pnl.mean():,.2f}")
+print(f"Std Dev: ${pnl.std():,.2f}")
+print(f"Profitable: {(pnl > 0).sum()} / {len(pnl)} strategies")
+```
+
+### Adding Statistics
+
+```python
+fig = amm.plot_pnl_distribution(result)
+
+# Add percentile lines
+for percentile in [10, 50, 90]:
+    value = np.percentile(result.metrics['net_pnl'], percentile)
+    fig.add_vline(
+        x=value,
+        line_dash="dash",
+        annotation_text=f"P{percentile}",
+    )
+
+fig.show()
+```
+
+## Combining Multiple Plots
+
+### Dashboard Layout
+
+```python
+from plotly.subplots import make_subplots
+
+# Create 2x2 dashboard
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=(
+        'Performance (Best Strategy)',
+        'Return Heatmap',
+        'Efficient Frontier',
+        'PnL Distribution'
+    ),
+    specs=[
+        [{"type": "xy"}, {"type": "heatmap"}],
+        [{"type": "xy"}, {"type": "xy"}]
+    ]
+)
+
+# Add performance trace (simplified)
+best_idx = result.summary().index[0]
+history = result.get_position_history(best_idx)
+prices = swaps['price'].values
+portfolio_value = (
+    history['token0_balance'] * prices +
+    history['token1_balance']
+)
+fig.add_trace(
+    go.Scatter(y=portfolio_value, name='Value'),
+    row=1, col=1
+)
+
+# Continue adding other traces...
+fig.update_layout(height=800, showlegend=False)
+fig.show()
+```
+
+### Saving Figures
+
+```python
+# Save as HTML (interactive)
+fig = amm.plot_performance(result, strategy_idx=0)
+fig.write_html("performance.html")
+
+# Save as PNG (static)
+fig.write_image("performance.png", width=1200, height=800)
+
+# Save as PDF
+fig.write_image("performance.pdf", width=1200, height=800)
+```
+
+<Note>
+Saving as PNG/PDF requires `kaleido`: `pip install kaleido`
+</Note>
+
+## Styling Tips
+
+### Dark Theme
+
+```python
+fig = amm.plot_performance(result, strategy_idx=0)
+fig.update_layout(template='plotly_dark')
+fig.show()
+```
+
+### Presentation Mode
+
+```python
+fig = amm.plot_metrics_heatmap(result, 'tick_upper', 'tick_lower', 'sharpe')
+fig.update_layout(
+    font=dict(size=16),
+    title=dict(font=dict(size=24)),
+    width=1000,
+    height=800,
+)
+fig.show()
+```
+
+### Color Scales
+
+```python
+# For heatmaps
+fig = amm.plot_metrics_heatmap(result, 'tick_upper', 'tick_lower', 'sharpe')
+fig.update_traces(colorscale='Viridis')  # or 'RdYlGn', 'Blues', etc.
+fig.show()
+```
+
+## Quick Reference
+
+```python
+# Performance over time
+amm.plot_performance(result, strategy_idx=0)
+
+# Parameter sensitivity
+amm.plot_metrics_heatmap(result, x_param='param1', y_param='param2', metric='sharpe')
+
+# Risk-return analysis
+amm.plot_efficient_frontier(result)
+
+# Distribution analysis
+amm.plot_pnl_distribution(result)
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="V3 Backtesting" icon="chart-mixed" href="/tutorials/intermediate/uniswap-v3-backtesting">
+    Learn concentrated liquidity strategies
+  </Card>
+  <Card title="Custom Charts" icon="palette" href="/how-to/visualization/custom-charts">
+    Build custom visualizations
+  </Card>
+</CardGroup>

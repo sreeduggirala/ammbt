@@ -1,0 +1,78 @@
+---
+title: "Custom Charts"
+description: "Create custom visualizations with Plotly"
+---
+
+# Custom Charts
+
+## Portfolio Value Over Time
+
+```python
+import plotly.graph_objects as go
+
+history = result.get_position_history(0)
+prices = swaps['price'].values
+
+portfolio_value = (
+    history['token0_balance'] * prices +
+    history['token1_balance'] +
+    history['uncollected_fees_0'] * prices +
+    history['uncollected_fees_1'] -
+    history['gas_spent']
+)
+
+fig = go.Figure()
+fig.add_trace(go.Scatter(y=portfolio_value, name='Portfolio'))
+fig.add_hline(y=10000, line_dash='dash', annotation_text='Initial')
+fig.update_layout(title='Portfolio Value', yaxis_title='USD')
+fig.show()
+```
+
+## Multi-Strategy Comparison
+
+```python
+fig = go.Figure()
+
+for idx in result.summary().index[:5]:
+    history = result.get_position_history(idx)
+    value = history['token0_balance'] * prices + history['token1_balance']
+    fig.add_trace(go.Scatter(y=value, name=f'Strategy {idx}'))
+
+fig.update_layout(title='Top 5 Strategies')
+fig.show()
+```
+
+## Parameter vs Metric Scatter
+
+```python
+import plotly.express as px
+
+fig = px.scatter(
+    result.metrics,
+    x='tick_upper',
+    y='net_pnl',
+    color='sharpe',
+    size='time_in_position',
+    title='Net PnL by Upper Tick'
+)
+fig.show()
+```
+
+## Dashboard Layout
+
+```python
+from plotly.subplots import make_subplots
+
+fig = make_subplots(rows=2, cols=2, subplot_titles=[
+    'Performance', 'PnL Distribution', 'Risk-Return', 'Range Analysis'
+])
+
+# Add traces to each subplot...
+fig.update_layout(height=800, showlegend=False)
+fig.show()
+```
+
+## See Also
+
+- [Basic Plotting Tutorial](/tutorials/beginner/basic-plotting)
+- [Plotly Documentation](https://plotly.com/python/)

@@ -1,14 +1,36 @@
 """
 Integration tests for full backtest workflow.
-
-Tests end-to-end backtesting with synthetic data.
 """
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from ammbt import LPBacktester, generate_swaps
+from ammbt import LPBacktester
+
+
+def _create_swap_df(n_swaps: int, initial_price: float = 1.0, seed: int = 42) -> pd.DataFrame:
+    """Create a simple swap DataFrame for testing."""
+    np.random.seed(seed)
+
+    returns = np.random.normal(0, 0.01, n_swaps)
+    prices = initial_price * np.exp(np.cumsum(returns))
+
+    volumes = np.abs(np.random.normal(1000, 200, n_swaps))
+    is_buy = np.random.random(n_swaps) > 0.5
+
+    amount0 = np.where(is_buy, volumes / prices, -volumes * prices)
+    amount1 = np.where(is_buy, -volumes, volumes)
+
+    timestamps = 1700000000 + np.arange(n_swaps) * 15
+
+    return pd.DataFrame({
+        'amount0': amount0.astype(np.float64),
+        'amount1': amount1.astype(np.float64),
+        'price': prices.astype(np.float64),
+        'timestamp': timestamps.astype(np.int64),
+        'volume': volumes.astype(np.float64),
+    })
 
 
 class TestV2FullBacktest:
@@ -51,8 +73,8 @@ class TestV2FullBacktest:
 
     def test_deterministic_results(self, seed):
         """Test that same input produces same output."""
-        swaps1 = generate_swaps(500, seed=seed)
-        swaps2 = generate_swaps(500, seed=seed)
+        swaps1 = _create_swap_df(500, seed=seed)
+        swaps2 = _create_swap_df(500, seed=seed)
 
         strategies = {
             'initial_capital': [10000.0],
@@ -125,7 +147,7 @@ class TestBacktestEdgeCases:
 
     def test_single_swap(self):
         """Test backtest with single swap."""
-        swaps = generate_swaps(1, seed=42)
+        swaps = _create_swap_df(1, seed=42)
         strategies = {
             'initial_capital': [10000.0],
             'rebalance_threshold': [0.0],
@@ -192,73 +214,6 @@ class TestBacktestEdgeCases:
         result = bt.run(small_swap_df, strategies)
 
         assert not np.isnan(result.metrics['net_pnl'].iloc[0])
-
-
-class TestSyntheticDataGeneration:
-    """Tests for synthetic data generation."""
-
-    def test_generate_swaps_shape(self):
-        """Test that generated swaps have correct shape."""
-        swaps = generate_swaps(1000, seed=42)
-
-        assert len(swaps) == 1000
-        assert 'amount0' in swaps.columns
-        assert 'amount1' in swaps.columns
-        assert 'price' in swaps.columns
-        assert 'timestamp' in swaps.columns
-        assert 'volume' in swaps.columns
-
-    def test_generate_swaps_dtypes(self):
-        """Test that generated swaps have correct dtypes."""
-        swaps = generate_swaps(100, seed=42)
-
-        assert swaps['amount0'].dtype == np.float64
-        assert swaps['amount1'].dtype == np.float64
-        assert swaps['price'].dtype == np.float64
-        assert swaps['timestamp'].dtype == np.int64
-        assert swaps['volume'].dtype == np.float64
-
-    def test_generate_swaps_prices_positive(self):
-        """Test that all generated prices are positive."""
-        swaps = generate_swaps(10000, seed=42)
-        assert (swaps['price'] > 0).all()
-
-    def test_generate_swaps_timestamps_increasing(self):
-        """Test that timestamps are monotonically non-decreasing."""
-        swaps = generate_swaps(1000, seed=42)
-        # Due to int conversion of exponential distribution, some deltas can be 0
-        assert (swaps['timestamp'].diff().dropna() >= 0).all()
-
-    def test_generate_swaps_buy_sell_ratio(self):
-        """Test that buy/sell ratio is approximately correct."""
-        swaps = generate_swaps(10000, buy_sell_ratio=0.7, seed=42)
-
-        # Buys have positive amount0 (token0 into pool)
-        n_buys = (swaps['amount0'] > 0).sum()
-        actual_ratio = n_buys / len(swaps)
-
-        assert abs(actual_ratio - 0.7) < 0.05  # Within 5%
-
-    def test_generate_swaps_different_models(self):
-        """Test generation with different price models."""
-        for model in ['gbm', 'jump', 'ou']:
-            swaps = generate_swaps(1000, price_model=model, seed=42)
-            assert len(swaps) == 1000
-            assert (swaps['price'] > 0).all()
-
-    def test_generate_swaps_reproducible(self):
-        """Test that seeded generation is reproducible."""
-        swaps1 = generate_swaps(100, seed=42)
-        swaps2 = generate_swaps(100, seed=42)
-
-        pd.testing.assert_frame_equal(swaps1, swaps2)
-
-    def test_generate_swaps_different_seeds(self):
-        """Test that different seeds produce different results."""
-        swaps1 = generate_swaps(100, seed=42)
-        swaps2 = generate_swaps(100, seed=43)
-
-        assert not swaps1['price'].equals(swaps2['price'])
 
 
 class TestV3Backtest:

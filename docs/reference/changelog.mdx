@@ -1,0 +1,55 @@
+---
+title: "Changelog"
+description: "Version history and release notes"
+---
+
+# Changelog
+
+All notable changes to ammBT are documented here.
+
+## [0.1.0] - 2024-01-15
+
+### Added
+
+- Initial release
+- Core backtesting engine (`LPBacktester`)
+- AMM simulators:
+  - UniswapV2Simulator (CPAMM)
+  - UniswapV3Simulator (CLMM)
+  - MeteoraLMMSimulator (DLMM)
+- Data generation:
+  - `generate_swaps()` for synthetic swap data
+  - `generate_price_path()` for price paths
+  - Support for GBM, jump-diffusion, and OU models
+- Plotting functions:
+  - `plot_performance()`
+  - `plot_metrics_heatmap()`
+  - `plot_efficient_frontier()`
+  - `plot_pnl_distribution()`
+- Utility functions:
+  - Tick/price conversions
+  - Bin/price conversions
+  - Strategy grid generators
+  - Configuration system
+
+### Performance
+
+- Vectorized simulation engine
+- Numba JIT compilation for math functions
+- O(N) complexity regardless of strategy count
+
+## Roadmap
+
+### Planned for 0.2.0
+
+- [ ] Real-time streaming support
+- [ ] Additional AMM protocols
+- [ ] Multi-pool portfolio optimization
+- [ ] Enhanced data loaders
+
+### Under Consideration
+
+- [ ] GPU acceleration
+- [ ] Live paper trading mode
+- [ ] Strategy optimization algorithms
+- [ ] Integration with DeFi protocols

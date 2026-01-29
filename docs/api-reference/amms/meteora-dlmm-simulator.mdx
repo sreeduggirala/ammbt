@@ -1,0 +1,78 @@
+---
+title: "MeteoraLMMSimulator"
+description: "Dynamic Liquidity Market Maker simulator"
+---
+
+# MeteoraLMMSimulator
+
+Simulates Meteora DLMM behavior with discrete bins and dynamic fees.
+
+## Constructor
+
+```python
+MeteoraLMMSimulator(
+    initial_price: float = 1.0,
+    bin_step: int = 25,
+    base_factor: int = 10000,
+    variable_fee_control: int = 40000,
+    max_volatility_accumulator: int = 350000,
+    volatility_reference: int = 10000,
+    decay_period: int = 600,
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `initial_price` | float | 1.0 | Starting price |
+| `bin_step` | int | 25 | Basis points per bin |
+| `base_factor` | int | 10000 | Fee base factor |
+| `variable_fee_control` | int | 40000 | Variable fee control |
+| `max_volatility_accumulator` | int | 350000 | Max volatility |
+| `volatility_reference` | int | 10000 | Reference volatility |
+| `decay_period` | int | 600 | Decay period (seconds) |
+
+## Position Dtype
+
+```python
+DLMM_POSITION_DTYPE = np.dtype([
+    ('bin_lower', 'i4'),
+    ('bin_upper', 'i4'),
+    ('liquidity', 'f8'),
+    ('liquidity_shape', 'i4'),
+    ('token_x_balance', 'f8'),
+    ('token_y_balance', 'f8'),
+    ('uncollected_fees_x', 'f8'),
+    ('uncollected_fees_y', 'f8'),
+    ('fee_growth_global_x', 'f8'),
+    ('fee_growth_global_y', 'f8'),
+    ('is_active', '?'),
+    ('is_in_range', '?'),
+    ('gas_spent', 'f8'),
+    ('last_rebalance_idx', 'i4'),
+    ('num_rebalances', 'i4'),
+])
+```
+
+## Liquidity Shapes
+
+| Value | Name | Description |
+|-------|------|-------------|
+| 0 | SHAPE_SPOT | Uniform distribution |
+| 1 | SHAPE_CURVE | Concentrated center |
+| 2 | SHAPE_BID_ASK | More at edges |
+
+## Usage
+
+```python
+bt = LPBacktester(
+    amm_type='dlmm',
+    bin_step=25,
+)
+```
+
+## See Also
+
+- [DLMM Concepts](/concepts/amm-fundamentals/dlmm-meteora)
+- [DLMM Tutorial](/tutorials/intermediate/meteora-dlmm-backtesting)

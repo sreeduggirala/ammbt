@@ -1,0 +1,66 @@
+---
+title: "UniswapV2Simulator"
+description: "Constant Product AMM (CPAMM) simulator"
+---
+
+# UniswapV2Simulator
+
+Simulates Uniswap V2 constant product AMM behavior.
+
+## Constructor
+
+```python
+UniswapV2Simulator(
+    initial_reserve0: float = 1_000_000.0,
+    initial_reserve1: float = 1_000_000.0,
+    fee_rate: float = 0.003,
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `initial_reserve0` | float | 1,000,000 | Initial token0 reserve |
+| `initial_reserve1` | float | 1,000,000 | Initial token1 reserve |
+| `fee_rate` | float | 0.003 | Swap fee (0.3%) |
+
+## Position Dtype
+
+```python
+V2_POSITION_DTYPE = np.dtype([
+    ('liquidity', 'f8'),           # LP tokens
+    ('token0_balance', 'f8'),      # Token0 amount
+    ('token1_balance', 'f8'),      # Token1 amount
+    ('uncollected_fees_0', 'f8'),  # Fees token0
+    ('uncollected_fees_1', 'f8'),  # Fees token1
+    ('gas_spent', 'f8'),           # Gas costs
+    ('is_active', '?'),            # Active
+    ('last_rebalance_idx', 'i4'),  # Last rebalance
+    ('num_rebalances', 'i4'),      # Rebalance count
+])
+```
+
+## Strategy Dtype
+
+```python
+V2_STRATEGY_DTYPE = np.dtype([
+    ('initial_capital', 'f8'),
+    ('rebalance_threshold', 'f8'),
+    ('rebalance_frequency', 'i4'),
+])
+```
+
+## Usage
+
+```python
+bt = LPBacktester(
+    amm_type='v2',
+    fee_rate=0.003,
+)
+```
+
+## See Also
+
+- [CPAMM Concepts](/concepts/amm-fundamentals/cpamm-uniswap-v2)
+- [V2 Tutorial](/tutorials/beginner/your-first-v2-backtest)

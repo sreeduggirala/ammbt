@@ -1,0 +1,62 @@
+---
+title: "plot_performance"
+description: "Plot strategy performance over time"
+---
+
+# plot_performance
+
+Create a multi-subplot chart showing strategy performance over time.
+
+## Signature
+
+```python
+def plot_performance(
+    result: BacktestResult,
+    strategy_idx: int = 0,
+    show_reserves: bool = True,
+) -> go.Figure
+```
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `result` | BacktestResult | - | Backtest result object |
+| `strategy_idx` | int | 0 | Strategy index to plot |
+| `show_reserves` | bool | True | Show pool reserves subplot |
+
+## Returns
+
+`plotly.graph_objects.Figure` - Interactive Plotly figure.
+
+## Subplots
+
+1. **Portfolio Value**: Total position value over time
+2. **Uncollected Fees**: Accumulated trading fees
+3. **Pool Reserves**: (Optional) Reserve levels
+
+## Example
+
+```python
+import ammbt as amm
+
+# Run backtest
+result = bt.run(swaps, strategies)
+
+# Plot best strategy
+best_idx = result.summary().index[0]
+fig = amm.plot_performance(result, strategy_idx=best_idx)
+fig.show()
+
+# Customize
+fig.update_layout(
+    title='ETH-USDC LP Performance',
+    height=800,
+)
+fig.show()
+```
+
+## See Also
+
+- [BacktestResult](/api-reference/core/backtestresult) - Result object
+- [Basic Plotting Tutorial](/tutorials/beginner/basic-plotting) - Plotting guide

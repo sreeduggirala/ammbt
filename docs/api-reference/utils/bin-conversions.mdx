@@ -1,0 +1,72 @@
+---
+title: "Bin Conversions"
+description: "DLMM bin/price conversion utilities"
+---
+
+# Bin Conversions
+
+Utilities for converting between DLMM bins and prices.
+
+## Functions
+
+### bin_id_to_price
+
+Convert bin ID to price.
+
+```python
+def bin_id_to_price(bin_id: int, bin_step: int) -> float
+```
+
+Formula: `price = (1 + bin_step/10000) ** bin_id`
+
+### price_to_bin_id
+
+Convert price to nearest bin ID.
+
+```python
+def price_to_bin_id(price: float, bin_step: int) -> int
+```
+
+### bin_range_width_from_bins
+
+Calculate price range width from bin bounds.
+
+```python
+def bin_range_width_from_bins(
+    bin_lower: int,
+    bin_upper: int,
+    bin_step: int,
+) -> float
+```
+
+### get_recommended_bin_step
+
+Get recommended bin step for volatility.
+
+```python
+def get_recommended_bin_step(volatility_daily: float) -> int
+```
+
+| Volatility | Bin Step |
+|------------|----------|
+| < 1% | 10 |
+| 1-2% | 25 |
+| 2-5% | 50 |
+| > 5% | 100 |
+
+## Examples
+
+```python
+from ammbt.utils import bin_id_to_price, price_to_bin_id
+
+# Bin to price
+price = bin_id_to_price(100, bin_step=25)  # ~1.0253
+
+# Price to bin
+bin_id = price_to_bin_id(1.10, bin_step=25)  # ~38
+```
+
+## See Also
+
+- [DLMM Concepts](/concepts/amm-fundamentals/dlmm-meteora)
+- [Strategy Generators](/api-reference/utils/strategy-generators)

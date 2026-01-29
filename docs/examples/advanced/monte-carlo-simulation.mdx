@@ -1,0 +1,64 @@
+---
+title: "Monte Carlo Simulation"
+description: "Statistical analysis with multiple scenarios"
+---
+
+# Monte Carlo Simulation
+
+Test strategy robustness across many random scenarios.
+
+```python
+import ammbt as amm
+import numpy as np
+import pandas as pd
+
+# Strategy to test
+strategies = {
+    'initial_capital': [25000],
+    'tick_lower': [-200],
+    'tick_upper': [200],
+    'rebalance_threshold': [0.05],
+}
+
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+
+# Run many scenarios
+n_simulations = 50
+results = []
+
+for seed in range(n_simulations):
+    swaps = amm.generate_swaps(
+        n_swaps=10000,
+        price_volatility=0.03,
+        seed=seed
+    )
+
+    result = bt.run(swaps, strategies)
+    m = result.metrics.iloc[0]
+
+    results.append({
+        'seed': seed,
+        'net_pnl': m['net_pnl'],
+        'sharpe': m['sharpe'],
+        'max_drawdown': m['max_drawdown_pct'],
+    })
+
+mc_results = pd.DataFrame(results)
+
+# Statistics
+print("Monte Carlo Results:")
+print(f"Mean PnL: ${mc_results['net_pnl'].mean():.2f}")
+print(f"Std PnL: ${mc_results['net_pnl'].std():.2f}")
+print(f"Win Rate: {(mc_results['net_pnl'] > 0).mean():.1%}")
+print(f"5th percentile: ${mc_results['net_pnl'].quantile(0.05):.2f}")
+print(f"95th percentile: ${mc_results['net_pnl'].quantile(0.95):.2f}")
+
+# Plot distribution
+import plotly.express as px
+fig = px.histogram(mc_results, x='net_pnl', nbins=20, title='PnL Distribution')
+fig.show()
+```
+
+## See Also
+
+- [Backtest Validation](/how-to/analysis/backtest-validation)

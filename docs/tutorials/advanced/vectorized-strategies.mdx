@@ -1,0 +1,371 @@
+---
+title: "Vectorized Strategies"
+description: "Understanding ammBT's vectorized architecture and building custom strategies"
+---
+
+# Vectorized Strategies
+
+ammBT's core power comes from its **vectorized architecture**. Instead of simulating strategies one at a time, it processes all strategies simultaneously using NumPy arrays. This tutorial explains how it works and how to leverage it effectively.
+
+## Why Vectorization Matters
+
+### Traditional Approach (Slow)
+
+```python
+# Pseudo-code for traditional backtesting
+for strategy in strategies:          # O(S) strategies
+    position = initialize()
+    for swap in swaps:               # O(N) swaps
+        position = update(position, swap)
+        position = check_rebalance(position)
+    results.append(calculate_metrics(position))
+
+# Total: O(S * N) operations
+```
+
+### ammBT's Approach (Fast)
+
+```python
+# Pseudo-code for vectorized backtesting
+positions = initialize_all(n_strategies)  # (N, S) array
+for swap in swaps:                         # O(N) swaps
+    positions = update_all(positions, swap)  # Vectorized
+    positions = check_rebalance_all(positions)
+
+# Total: O(N) operations (strategies processed in parallel)
+```
+
+## The Position State Array
+
+ammBT maintains a 2D array where:
+- **Rows**: Time steps (swap events)
+- **Columns**: Strategies
+
+```python
+# Shape: (n_swaps, n_strategies)
+# Each cell is a structured array with position state
+
+import numpy as np
+
+# V3 position structure
+V3_POSITION_DTYPE = np.dtype([
+    ('tick_lower', 'i4'),
+    ('tick_upper', 'i4'),
+    ('liquidity', 'f8'),
+    ('token0_balance', 'f8'),
+    ('token1_balance', 'f8'),
+    ('fee_growth_inside_0_last', 'f8'),
+    ('fee_growth_inside_1_last', 'f8'),
+    ('uncollected_fees_0', 'f8'),
+    ('uncollected_fees_1', 'f8'),
+    ('is_active', '?'),
+    ('is_in_range', '?'),
+    ('gas_spent', 'f8'),
+    ('last_rebalance_idx', 'i4'),
+    ('num_rebalances', 'i4'),
+])
+```
+
+## How Updates Work
+
+Each swap triggers a vectorized update across all strategies:
+
+```python
+def simulate_step(positions, swap, strategy_params):
+    """Process one swap for all strategies."""
+
+    # Current position state (shape: n_strategies)
+    current = positions[swap_idx]
+
+    # Calculate new state for ALL strategies at once
+    new_token0 = current['token0_balance'] + fee_share_0
+    new_token1 = current['token1_balance'] + fee_share_1
+
+    # Check rebalance conditions (vectorized boolean)
+    should_rebalance = (
+        (price_change > strategy_params['rebalance_threshold']) |
+        (swaps_since_rebalance > strategy_params['rebalance_frequency'])
+    )
+
+    # Apply rebalance where needed (masked assignment)
+    positions[swap_idx + 1] = np.where(
+        should_rebalance,
+        rebalanced_positions,
+        updated_positions
+    )
+```
+
+## Strategy Parameter Grids
+
+When you pass a dictionary of lists, ammBT creates the Cartesian product:
+
+```python
+strategies = {
+    'initial_capital': [10000, 25000],      # 2 values
+    'tick_lower': [-200, -400],             # 2 values
+    'tick_upper': [200, 400],               # 2 values
+    'rebalance_threshold': [0.0, 0.05],     # 2 values
+}
+
+# Result: 2 * 2 * 2 * 2 = 16 strategies
+```
+
+Internally, this becomes a NumPy structured array:
+
+```python
+strategy_params = np.array([
+    (10000, -200, 200, 0.00),
+    (10000, -200, 200, 0.05),
+    (10000, -200, 400, 0.00),
+    # ... 13 more rows
+], dtype=strategy_dtype)
+```
+
+## Numba JIT Compilation
+
+Performance-critical functions use Numba for machine-code compilation:
+
+```python
+from numba import njit
+
+@njit(cache=True)
+def tick_to_price(tick: int) -> float:
+    """Convert tick to price (Numba-compiled)."""
+    return 1.0001 ** tick
+
+@njit(cache=True)
+def get_liquidity_for_amounts(
+    sqrt_price_x96: float,
+    sqrt_price_a_x96: float,
+    sqrt_price_b_x96: float,
+    amount0: float,
+    amount1: float,
+) -> float:
+    """Calculate liquidity from amounts (Numba-compiled)."""
+    if sqrt_price_x96 <= sqrt_price_a_x96:
+        return amount0 * (sqrt_price_a_x96 * sqrt_price_b_x96) / (sqrt_price_b_x96 - sqrt_price_a_x96)
+    elif sqrt_price_x96 < sqrt_price_b_x96:
+        liquidity0 = amount0 * (sqrt_price_x96 * sqrt_price_b_x96) / (sqrt_price_b_x96 - sqrt_price_x96)
+        liquidity1 = amount1 / (sqrt_price_x96 - sqrt_price_a_x96)
+        return min(liquidity0, liquidity1)
+    else:
+        return amount1 / (sqrt_price_b_x96 - sqrt_price_a_x96)
+```
+
+## Performance Benchmarks
+
+```python
+import time
+import ammbt as amm
+
+# Generate test data
+swaps = amm.generate_swaps(n_swaps=10000, seed=42)
+
+# Test with different strategy counts
+for n_strategies in [10, 100, 1000, 10000]:
+    strategies = {
+        'initial_capital': [10000] * n_strategies,
+        'tick_lower': [-200] * n_strategies,
+        'tick_upper': [200] * n_strategies,
+    }
+
+    bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+
+    start = time.time()
+    result = bt.run(swaps, strategies)
+    elapsed = time.time() - start
+
+    print(f"{n_strategies:>6} strategies: {elapsed:.2f}s ({n_strategies/elapsed:.0f} strategies/sec)")
+```
+
+Expected output:
+```
+    10 strategies: 0.15s (67 strategies/sec)
+   100 strategies: 0.18s (556 strategies/sec)
+  1000 strategies: 0.45s (2222 strategies/sec)
+ 10000 strategies: 3.20s (3125 strategies/sec)
+```
+
+Note: Time grows sub-linearly with strategy count due to vectorization.
+
+## Memory Considerations
+
+The position array can get large:
+
+```python
+# Memory calculation
+n_swaps = 100000
+n_strategies = 10000
+position_size = 100  # bytes per position (approx)
+
+memory_gb = (n_swaps * n_strategies * position_size) / (1024**3)
+print(f"Memory required: {memory_gb:.1f} GB")
+```
+
+### Memory Optimization Tips
+
+```python
+# 1. Use smaller data types where possible
+# 2. Process in batches if needed
+# 3. Only keep final positions, not full history
+
+# Example: Batch processing
+def run_in_batches(swaps, strategies, batch_size=1000):
+    all_results = []
+    strategy_list = list(strategies.values())[0]  # Get list length
+
+    for i in range(0, len(strategy_list), batch_size):
+        batch_strategies = {
+            k: v[i:i+batch_size] for k, v in strategies.items()
+        }
+        result = bt.run(swaps, batch_strategies)
+        all_results.append(result.metrics)
+
+    return pd.concat(all_results, ignore_index=True)
+```
+
+## Leveraging Parallel Processing
+
+For very large strategy sets, you can parallelize across CPU cores:
+
+```python
+from concurrent.futures import ProcessPoolExecutor
+import numpy as np
+
+def run_chunk(args):
+    swaps, strategies, amm_type, fee_tier = args
+    bt = amm.LPBacktester(amm_type=amm_type, fee_tier=fee_tier)
+    return bt.run(swaps, strategies).metrics
+
+def parallel_backtest(swaps, strategies, n_workers=4):
+    # Split strategies into chunks
+    n_strategies = len(strategies['initial_capital'])
+    chunk_size = n_strategies // n_workers
+
+    chunks = []
+    for i in range(n_workers):
+        start = i * chunk_size
+        end = start + chunk_size if i < n_workers - 1 else n_strategies
+        chunk_strategies = {k: v[start:end] for k, v in strategies.items()}
+        chunks.append((swaps, chunk_strategies, 'v3', 3000))
+
+    # Run in parallel
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        results = list(executor.map(run_chunk, chunks))
+
+    return pd.concat(results, ignore_index=True)
+```
+
+## Understanding the Simulation Loop
+
+Here's the conceptual flow of ammBT's simulation:
+
+```
+1. Initialize position array
+   └── Shape: (n_swaps + 1, n_strategies)
+   └── First row: Initial positions based on strategy params
+
+2. For each swap (vectorized over strategies):
+   ├── Update pool state (price, reserves)
+   ├── Calculate fee share for each position
+   ├── Update token balances
+   ├── Check if in range (V3/DLMM)
+   ├── Check rebalance conditions
+   │   ├── Price threshold exceeded?
+   │   ├── Frequency threshold met?
+   │   └── Out of range? (V3/DLMM)
+   ├── Apply rebalances where needed
+   └── Copy state to next row
+
+3. Calculate metrics from final positions
+```
+
+## Best Practices for Large-Scale Backtests
+
+<Check>
+**Start small**: Test with 100 strategies before scaling to 10,000
+</Check>
+
+<Check>
+**Profile memory**: Monitor RAM usage during development
+</Check>
+
+<Check>
+**Use DataFrames for strategies**: More explicit than dict of lists
+</Check>
+
+<Check>
+**Cache Numba compilation**: First run is slower due to JIT
+</Check>
+
+<Check>
+**Pre-filter strategies**: Remove obviously bad combinations
+</Check>
+
+## Example: Comprehensive Strategy Search
+
+```python
+import ammbt as amm
+import numpy as np
+import pandas as pd
+
+# Generate realistic swap data
+swaps = amm.generate_swaps(
+    n_swaps=20000,
+    price_volatility=0.03,
+    seed=42
+)
+
+# Define comprehensive search space
+tick_lowers = list(range(-1000, -50, 50))  # 19 values
+tick_uppers = list(range(100, 1050, 50))   # 19 values
+thresholds = [0.0, 0.02, 0.03, 0.05, 0.07, 0.10, 0.15]  # 7 values
+frequencies = [0, 50, 100, 200, 500]  # 5 values
+
+# Create strategy grid using DataFrame for clarity
+from itertools import product
+
+grid = list(product(
+    [25000],  # Fixed capital
+    tick_lowers,
+    tick_uppers,
+    thresholds,
+    frequencies
+))
+
+strategies = pd.DataFrame(grid, columns=[
+    'initial_capital', 'tick_lower', 'tick_upper',
+    'rebalance_threshold', 'rebalance_frequency'
+])
+
+# Filter invalid combinations (lower must be < upper)
+strategies = strategies[strategies['tick_lower'] < strategies['tick_upper']]
+
+print(f"Testing {len(strategies)} valid strategies")
+
+# Run backtest
+bt = amm.LPBacktester(amm_type='v3', fee_tier=3000)
+result = bt.run(swaps, strategies)
+
+# Find optimal
+summary = result.summary()
+print("\nTop 10 Strategies:")
+print(summary.head(10))
+
+# Analyze parameter importance
+print("\nParameter Correlations with Return:")
+corr = result.metrics[['tick_lower', 'tick_upper', 'rebalance_threshold',
+                       'rebalance_frequency', 'total_return_pct']].corr()
+print(corr['total_return_pct'].drop('total_return_pct'))
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Custom AMM Simulator" icon="wrench" href="/tutorials/advanced/custom-amm-simulator">
+    Build your own AMM implementation
+  </Card>
+  <Card title="Performance Optimization" icon="gauge-high" href="/tutorials/advanced/performance-optimization">
+    Squeeze maximum performance
+  </Card>
+</CardGroup>

@@ -1,0 +1,50 @@
+---
+title: "plot_pnl_distribution"
+description: "Plot PnL distribution across all strategies"
+---
+
+# plot_pnl_distribution
+
+Create a histogram showing the distribution of PnL across all tested strategies.
+
+## Signature
+
+```python
+def plot_pnl_distribution(
+    result: BacktestResult,
+) -> go.Figure
+```
+
+## Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `result` | BacktestResult | Backtest result object |
+
+## Returns
+
+`plotly.graph_objects.Figure` - Histogram with mean line.
+
+## Example
+
+```python
+import ammbt as amm
+
+result = bt.run(swaps, strategies)
+
+fig = amm.plot_pnl_distribution(result)
+fig.show()
+
+# Add percentile lines
+import numpy as np
+for p in [10, 50, 90]:
+    value = np.percentile(result.metrics['net_pnl'], p)
+    fig.add_vline(x=value, line_dash='dash',
+                  annotation_text=f'P{p}')
+fig.show()
+```
+
+## See Also
+
+- [PnL Calculations](/concepts/metrics/pnl-calculations)
+- [Interpreting Results](/tutorials/beginner/interpreting-results)

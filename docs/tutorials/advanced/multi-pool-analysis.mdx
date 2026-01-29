@@ -1,0 +1,464 @@
+---
+title: "Multi-Pool Analysis"
+description: "Analyze and compare strategies across multiple AMM pools"
+---
+
+# Multi-Pool Analysis
+
+This tutorial covers techniques for analyzing LP strategies across multiple pools simultaneously. You'll learn how to compare performance, identify correlations, and build diversified LP portfolios.
+
+## Why Multi-Pool Analysis?
+
+Analyzing multiple pools helps you:
+
+- **Diversify risk** across different token pairs
+- **Identify opportunities** in less competitive pools
+- **Understand correlations** between pool performance
+- **Optimize capital allocation** across pools
+
+## Setting Up Multi-Pool Data
+
+### Loading Multiple Pools
+
+```python
+import ammbt as amm
+import pandas as pd
+
+# Define pools to analyze
+pools = {
+    'ETH-USDC': {
+        'initial_price': 2000.0,
+        'volatility': 0.03,
+        'fee_tier': 3000,
+    },
+    'ETH-WBTC': {
+        'initial_price': 0.06,  # ETH/WBTC
+        'volatility': 0.025,
+        'fee_tier': 3000,
+    },
+    'USDC-USDT': {
+        'initial_price': 1.0,
+        'volatility': 0.001,  # Very stable
+        'fee_tier': 500,
+    },
+}
+
+# Generate synthetic data for each pool
+pool_swaps = {}
+for name, params in pools.items():
+    pool_swaps[name] = amm.generate_swaps(
+        n_swaps=10000,
+        initial_price=params['initial_price'],
+        price_volatility=params['volatility'],
+        seed=hash(name) % 2**31,  # Deterministic seed per pool
+    )
+
+print(f"Loaded {len(pool_swaps)} pools")
+```
+
+### Running Backtests per Pool
+
+```python
+def backtest_pool(
+    pool_name: str,
+    swaps: pd.DataFrame,
+    pool_params: dict,
+    strategies: dict,
+) -> pd.DataFrame:
+    """Run backtest for a single pool."""
+
+    bt = amm.LPBacktester(
+        amm_type='v3',
+        initial_price=pool_params['initial_price'],
+        fee_tier=pool_params['fee_tier'],
+    )
+
+    result = bt.run(swaps, strategies)
+    metrics = result.metrics.copy()
+    metrics['pool'] = pool_name
+
+    return metrics
+
+# Define common strategies
+strategies = {
+    'initial_capital': [10000],
+    'tick_lower': [-200, -400, -600],
+    'tick_upper': [200, 400, 600],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+}
+
+# Run for all pools
+all_results = []
+for name, params in pools.items():
+    result = backtest_pool(name, pool_swaps[name], params, strategies)
+    all_results.append(result)
+
+combined = pd.concat(all_results, ignore_index=True)
+print(f"Total strategies tested: {len(combined)}")
+```
+
+## Comparing Pool Performance
+
+### Summary Statistics
+
+```python
+# Aggregate by pool
+pool_summary = combined.groupby('pool').agg({
+    'net_pnl': ['mean', 'std', 'min', 'max'],
+    'sharpe': ['mean', 'max'],
+    'total_return_pct': ['mean', 'max'],
+    'max_drawdown_pct': ['mean', 'min'],
+}).round(2)
+
+print("Pool Performance Summary:")
+print(pool_summary)
+```
+
+### Visualizing Comparisons
+
+```python
+import plotly.express as px
+
+# Box plot of returns by pool
+fig = px.box(
+    combined,
+    x='pool',
+    y='total_return_pct',
+    title='Return Distribution by Pool',
+    labels={'total_return_pct': 'Total Return (%)', 'pool': 'Pool'}
+)
+fig.show()
+
+# Scatter plot: Return vs Risk by pool
+pool_stats = combined.groupby('pool').agg({
+    'total_return_pct': 'mean',
+    'max_drawdown_pct': 'mean',
+    'sharpe': 'mean',
+}).reset_index()
+
+fig = px.scatter(
+    pool_stats,
+    x='max_drawdown_pct',
+    y='total_return_pct',
+    size='sharpe',
+    text='pool',
+    title='Risk-Return by Pool',
+    labels={
+        'max_drawdown_pct': 'Avg Max Drawdown (%)',
+        'total_return_pct': 'Avg Return (%)',
+        'sharpe': 'Avg Sharpe'
+    }
+)
+fig.update_traces(textposition='top center')
+fig.show()
+```
+
+## Correlation Analysis
+
+### Return Correlations
+
+```python
+import numpy as np
+
+# Get best strategy per pool and track daily returns
+def get_daily_returns(result, swaps, strategy_idx=0):
+    """Calculate daily returns for a strategy."""
+    history = result.get_position_history(strategy_idx)
+    prices = swaps['price'].values
+
+    portfolio_value = (
+        history['token0_balance'] * prices +
+        history['token1_balance']
+    )
+
+    # Resample to daily
+    daily_values = portfolio_value[::100]  # Assuming ~100 swaps/day
+    returns = np.diff(daily_values) / daily_values[:-1]
+
+    return returns
+
+# Build correlation matrix
+pool_returns = {}
+for name, params in pools.items():
+    bt = amm.LPBacktester(
+        amm_type='v3',
+        initial_price=params['initial_price'],
+        fee_tier=params['fee_tier'],
+    )
+    result = bt.run(pool_swaps[name], {'initial_capital': [10000],
+                                        'tick_lower': [-200],
+                                        'tick_upper': [200]})
+    pool_returns[name] = get_daily_returns(result, pool_swaps[name])
+
+# Align lengths
+min_len = min(len(r) for r in pool_returns.values())
+aligned_returns = {k: v[:min_len] for k, v in pool_returns.items()}
+
+# Calculate correlation
+returns_df = pd.DataFrame(aligned_returns)
+corr_matrix = returns_df.corr()
+
+print("Return Correlations:")
+print(corr_matrix)
+
+# Heatmap
+fig = px.imshow(
+    corr_matrix,
+    labels=dict(color="Correlation"),
+    title="Pool Return Correlations",
+    color_continuous_scale='RdBu',
+    zmin=-1, zmax=1,
+)
+fig.show()
+```
+
+### Interpreting Correlations
+
+| Correlation | Interpretation |
+|-------------|----------------|
+| > 0.7 | Highly correlated - limited diversification benefit |
+| 0.3 - 0.7 | Moderate correlation |
+| -0.3 - 0.3 | Low correlation - good for diversification |
+| < -0.3 | Negative correlation - excellent for hedging |
+
+## Portfolio Optimization
+
+### Simple Equal Weight
+
+```python
+def equal_weight_portfolio(pool_metrics: dict, total_capital: float = 100000):
+    """Allocate equally across pools."""
+
+    n_pools = len(pool_metrics)
+    capital_per_pool = total_capital / n_pools
+
+    portfolio = []
+    for pool, metrics in pool_metrics.items():
+        best = metrics.loc[metrics['sharpe'].idxmax()]
+        portfolio.append({
+            'pool': pool,
+            'capital': capital_per_pool,
+            'expected_return': best['total_return_pct'] * capital_per_pool / 100,
+            'sharpe': best['sharpe'],
+        })
+
+    return pd.DataFrame(portfolio)
+
+# Get best strategies per pool
+pool_metrics = {name: combined[combined['pool'] == name] for name in pools.keys()}
+portfolio = equal_weight_portfolio(pool_metrics)
+print("Equal Weight Portfolio:")
+print(portfolio)
+```
+
+### Risk-Adjusted Allocation
+
+```python
+def risk_adjusted_portfolio(pool_metrics: dict, total_capital: float = 100000):
+    """Allocate proportional to Sharpe ratio."""
+
+    # Get best Sharpe per pool
+    pool_sharpes = {}
+    for pool, metrics in pool_metrics.items():
+        pool_sharpes[pool] = metrics['sharpe'].max()
+
+    # Normalize weights
+    total_sharpe = sum(max(0, s) for s in pool_sharpes.values())
+    if total_sharpe == 0:
+        return equal_weight_portfolio(pool_metrics, total_capital)
+
+    portfolio = []
+    for pool, sharpe in pool_sharpes.items():
+        weight = max(0, sharpe) / total_sharpe
+        capital = total_capital * weight
+
+        best = pool_metrics[pool].loc[pool_metrics[pool]['sharpe'].idxmax()]
+        portfolio.append({
+            'pool': pool,
+            'weight': weight,
+            'capital': capital,
+            'expected_return': best['total_return_pct'] * capital / 100,
+            'sharpe': sharpe,
+        })
+
+    return pd.DataFrame(portfolio)
+
+portfolio = risk_adjusted_portfolio(pool_metrics)
+print("Risk-Adjusted Portfolio:")
+print(portfolio)
+```
+
+### Mean-Variance Optimization
+
+```python
+from scipy.optimize import minimize
+
+def optimize_portfolio(returns_df: pd.DataFrame, target_return: float = None):
+    """Find optimal weights using mean-variance optimization."""
+
+    mean_returns = returns_df.mean()
+    cov_matrix = returns_df.cov()
+    n_assets = len(mean_returns)
+
+    def portfolio_volatility(weights):
+        return np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+
+    def portfolio_return(weights):
+        return np.dot(weights, mean_returns)
+
+    # Constraints
+    constraints = [
+        {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},  # Weights sum to 1
+    ]
+
+    if target_return is not None:
+        constraints.append({
+            'type': 'eq',
+            'fun': lambda w: portfolio_return(w) - target_return
+        })
+
+    # Bounds (0 to 1 for each weight)
+    bounds = tuple((0, 1) for _ in range(n_assets))
+
+    # Initial guess
+    initial_weights = np.array([1/n_assets] * n_assets)
+
+    # Minimize volatility
+    result = minimize(
+        portfolio_volatility,
+        initial_weights,
+        method='SLSQP',
+        bounds=bounds,
+        constraints=constraints,
+    )
+
+    return dict(zip(returns_df.columns, result.x))
+
+optimal_weights = optimize_portfolio(returns_df)
+print("Optimal Portfolio Weights:")
+for pool, weight in optimal_weights.items():
+    print(f"  {pool}: {weight:.1%}")
+```
+
+## Cross-Pool Strategy Comparison
+
+### Finding Universal Strategies
+
+```python
+# Which strategies work well across ALL pools?
+strategy_cols = ['tick_lower', 'tick_upper', 'rebalance_threshold']
+
+# Rank strategies within each pool
+combined['rank'] = combined.groupby('pool')['sharpe'].rank(ascending=False)
+
+# Find strategies that rank well across pools
+strategy_ranks = combined.groupby(strategy_cols)['rank'].mean().reset_index()
+strategy_ranks = strategy_ranks.sort_values('rank')
+
+print("Best Universal Strategies (avg rank across pools):")
+print(strategy_ranks.head(10))
+```
+
+### Pool-Specific Optimal Strategies
+
+```python
+# Find the best strategy for each pool
+best_per_pool = combined.loc[combined.groupby('pool')['sharpe'].idxmax()]
+print("Best Strategy per Pool:")
+print(best_per_pool[['pool'] + strategy_cols + ['sharpe', 'net_pnl']])
+```
+
+## Advanced: Multi-Pool Rebalancing
+
+Consider a strategy that moves capital between pools:
+
+```python
+def simulate_cross_pool_rebalancing(
+    pool_results: dict,
+    initial_capital: float = 100000,
+    rebalance_frequency: int = 1000,  # swaps
+):
+    """Simulate rebalancing capital across pools."""
+
+    # Get value over time for each pool
+    pool_values = {}
+    for pool, result in pool_results.items():
+        history = result.get_position_history(0)
+        prices = pool_swaps[pool]['price'].values
+        values = (history['token0_balance'] * prices + history['token1_balance'])
+        pool_values[pool] = values
+
+    # Align lengths
+    min_len = min(len(v) for v in pool_values.values())
+    n_pools = len(pool_values)
+
+    # Start with equal allocation
+    allocations = {pool: initial_capital / n_pools for pool in pool_values}
+    portfolio_value = [initial_capital]
+
+    for t in range(1, min_len):
+        # Update values based on pool performance
+        total_value = 0
+        for pool in pool_values:
+            # Scale by relative performance
+            if t > 0:
+                ratio = pool_values[pool][t] / pool_values[pool][t-1]
+                allocations[pool] *= ratio
+            total_value += allocations[pool]
+
+        portfolio_value.append(total_value)
+
+        # Rebalance periodically
+        if t % rebalance_frequency == 0 and t > 0:
+            # Rebalance to equal weight
+            for pool in allocations:
+                allocations[pool] = total_value / n_pools
+
+    return np.array(portfolio_value)
+
+# Run simulation
+portfolio_value = simulate_cross_pool_rebalancing(
+    {name: bt.run(pool_swaps[name], {'initial_capital': [10000]})
+     for name in pools}
+)
+
+# Plot
+import plotly.graph_objects as go
+fig = go.Figure()
+fig.add_trace(go.Scatter(y=portfolio_value, name='Cross-Pool Portfolio'))
+fig.update_layout(title='Cross-Pool Rebalancing Portfolio')
+fig.show()
+```
+
+## Key Takeaways
+
+<Check>
+Analyze multiple pools to identify best opportunities
+</Check>
+
+<Check>
+Low correlation between pools provides diversification
+</Check>
+
+<Check>
+Allocate based on risk-adjusted returns (Sharpe)
+</Check>
+
+<Check>
+Some strategies work universally, others are pool-specific
+</Check>
+
+<Check>
+Consider cross-pool rebalancing for dynamic allocation
+</Check>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Live Streaming" icon="satellite-dish" href="/tutorials/advanced/live-swap-streaming">
+    Connect to real-time data feeds
+  </Card>
+  <Card title="Examples Gallery" icon="images" href="/examples/gallery">
+    See complete implementation examples
+  </Card>
+</CardGroup>

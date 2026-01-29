@@ -1,0 +1,50 @@
+---
+title: "V2 Real Data Analysis"
+description: "Backtest V2 with historical data"
+---
+
+# V2 Real Data Analysis
+
+Using historical swap data for V2 backtesting.
+
+```python
+import ammbt as amm
+import pandas as pd
+
+# Load historical data (example format)
+# swaps = pd.read_csv('historical_v2_swaps.csv')
+
+# For this example, simulate realistic data
+swaps = amm.generate_swaps(
+    n_swaps=50000,
+    initial_price=3000.0,  # ETH price
+    price_volatility=0.035,
+    base_volume=50000,
+    seed=42
+)
+
+print(f"Data period: {len(swaps)} swaps")
+print(f"Price range: ${swaps['price'].min():.0f} - ${swaps['price'].max():.0f}")
+
+# Test strategies
+strategies = {
+    'initial_capital': [10000, 50000, 100000],
+    'rebalance_threshold': [0.0, 0.05, 0.10],
+    'rebalance_frequency': [0, 500],
+}
+
+bt = amm.LPBacktester(amm_type='v2')
+result = bt.run(swaps, strategies)
+
+# Analyze
+print("\nTop Strategies:")
+print(result.summary().head())
+
+# Risk-return plot
+fig = amm.plot_efficient_frontier(result)
+fig.show()
+```
+
+## See Also
+
+- [Working with Real Data](/tutorials/intermediate/working-with-real-data)
