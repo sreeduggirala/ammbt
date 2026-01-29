@@ -52,20 +52,25 @@ git clone <repo>
 cd ammbt
 pip install -r requirements.txt
 pip install -e .
-python test_install.py
+python -c "import ammbt; print('ammbt installed successfully')"
 ```
 
 ## Quick Start
 
 ```python
+import pandas as pd
+import numpy as np
 import ammbt as amm
 
-# Generate synthetic swap data
-swaps = amm.generate_swaps(
-    n_swaps=10000,
-    volatility=0.02,
-    drift=0.0
-)
+# Create swap data (or load from your data source)
+np.random.seed(42)
+n_swaps = 1000
+prices = 1000 * np.exp(np.cumsum(np.random.randn(n_swaps) * 0.01))
+swaps = pd.DataFrame({
+    'amount0': np.random.randn(n_swaps) * 10,
+    'amount1': np.random.randn(n_swaps) * 10000,
+    'price': prices,
+})
 
 # Define strategy space
 strategies = {
@@ -87,64 +92,39 @@ See `examples/uniswap_v2_demo.ipynb` for full walkthrough.
 
 ## Using Real Swap Data
 
-Historical swap data loaders are available for Uniswap V2/V3 (The Graph),
-and Solana venues like Meteora and Raydium (Birdeye APIs). Install the
-optional data dependencies first:
+Currently, users should source their own swap data from The Graph, Dune Analytics,
+or similar providers. The swap DataFrame should contain at minimum:
 
-```bash
-pip install -e ".[data]"
-```
+- `amount0`: Token 0 amount (positive = buy, negative = sell)
+- `amount1`: Token 1 amount
+- `price`: Current pool price
 
-```python
-import time
-import ammbt as amm
-from ammbt.data import UniswapV3Loader
+For Uniswap V3, additional fields enable tick-by-tick fee tracking:
 
-loader = UniswapV3Loader(network="ethereum")
-data = loader.load(
-    "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8",
-    start_time=1700000000,
-    end_time=1700500000,
-    limit=20000,
-)
-swaps = data.to_backtest_format()
+- `tick`: Current tick after swap
+- `liquidity`: Pool liquidity at time of swap
+- `sqrt_price_x96`: Precise price representation
 
-bt = amm.LPBacktester(amm_type="v3", fee_rate=0.003)
-results = bt.run(swaps, strategies)
-```
+**Note**: Data loader classes (`UniswapV3Loader`, `UniswapV2Loader`) are planned
+for a future release.
 
-## Live Swap Streaming (Polling)
+## Simulation Capabilities
 
-Loaders can also poll their data sources and stream new swaps. This is
-useful for near-real-time simulation or building a rolling dataset.
+ammBT provides comprehensive LP position simulation:
 
-```python
-import time
-import ammbt as amm
-from ammbt.data import UniswapV2Loader
-
-loader = UniswapV2Loader(network="ethereum")
-stream = loader.stream_swaps(
-    "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
-    start_time=int(time.time()) - 3600,
-    poll_interval=5.0,
-    batch_limit=500,
-)
-
-for batch in stream:
-    # batch is normalized swaps with timestamp/amount0/amount1/tx_hash
-    swaps = batch  # accumulate and backtest as desired
-    break
-```
+- **Impermanent Loss (IL)**: Calculated by comparing LP value vs hold value
+- **Rebalancing**: Threshold and frequency-based rebalancing with gas tracking
+- **In-range Fee Accrual**: V3 has complete tick-based fee tracking
+- **Comprehensive Metrics**: Sharpe ratio, Sortino ratio, max drawdown, capital efficiency
+- **Tick-by-tick V3 Processing**: Accurate fee growth simulation per swap
 
 ## Project Status
 
 - [x] Architecture design
 - [x] Uniswap v2 implementation (COMPLETE)
 - [x] Uniswap v3 implementation (COMPLETE)
-- [ ] Meteora DLMM implementation
-- [x] Data loaders for real swap data (The Graph/Birdeye)
-- [x] Live swap polling via loader streaming
+- [x] Meteora DLMM implementation (COMPLETE)
+- [ ] Data loaders for real swap data (Planned)
 - [ ] Record system for event tracking
 
 ## License
