@@ -202,6 +202,7 @@ def _simulate_dlmm_swaps_nb(
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
     gas_costs: np.ndarray,
+    pool_liquidity_series: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Core Numba-compiled simulation loop for DLMM.
@@ -258,11 +259,16 @@ def _simulate_dlmm_swaps_nb(
     fee_growth_global_x = 0.0
     fee_growth_global_y = 0.0
 
-    # Simplified: assume uniform pool liquidity
-    pool_liquidity = 1_000_000.0
+    # Pool liquidity: use dynamic series if provided, else fixed default
+    has_dynamic_liquidity = len(pool_liquidity_series) > 0
+    pool_liquidity = pool_liquidity_series[0] if has_dynamic_liquidity else 1_000_000.0
 
     # Main simulation loop
     for i in range(n_swaps):
+        # Update pool liquidity from dynamic series if available
+        if has_dynamic_liquidity:
+            pool_liquidity = pool_liquidity_series[i]
+
         current_timestamp = timestamps[i]
         time_elapsed = int(current_timestamp - last_timestamp)
 
@@ -585,6 +591,12 @@ class MeteoraLMMSimulator(BaseAMMSimulator):
         rebalance_frequency = strategy_params['rebalance_frequency'].astype(np.int32)
         gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
 
+        # Dynamic pool liquidity (empty array if not provided)
+        if 'liquidity' in swaps.columns:
+            pool_liquidity_series = swaps['liquidity'].values.astype(np.float64)
+        else:
+            pool_liquidity_series = np.empty(0, dtype=np.float64)
+
         # Run simulation
         positions, price_hist, bin_hist, fee_hist = _simulate_dlmm_swaps_nb(
             amount_x,
@@ -601,6 +613,7 @@ class MeteoraLMMSimulator(BaseAMMSimulator):
             rebalance_threshold,
             rebalance_frequency,
             gas_costs,
+            pool_liquidity_series,
         )
 
         metadata = {

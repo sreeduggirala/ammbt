@@ -248,6 +248,72 @@ def calculate_metrics(
     # Total return
     total_return = (final_values - initial_capital) / initial_capital
 
+    # VaR (Value at Risk) at 95% and 99% confidence
+    if n_swaps > 2:
+        var_95 = np.percentile(returns_series, 5, axis=0)
+        var_99 = np.percentile(returns_series, 1, axis=0)
+    else:
+        var_95 = np.zeros(n_strategies)
+        var_99 = np.zeros(n_strategies)
+
+    # CVaR (Conditional VaR / Expected Shortfall)
+    cvar_95 = np.zeros(n_strategies)
+    cvar_99 = np.zeros(n_strategies)
+    for j in range(n_strategies):
+        mask_95 = returns_series[:, j] <= var_95[j]
+        if mask_95.any():
+            cvar_95[j] = returns_series[mask_95, j].mean()
+        else:
+            cvar_95[j] = var_95[j]
+        mask_99 = returns_series[:, j] <= var_99[j]
+        if mask_99.any():
+            cvar_99[j] = returns_series[mask_99, j].mean()
+        else:
+            cvar_99[j] = var_99[j]
+
+    # Calmar ratio (return / max drawdown)
+    calmar = np.where(max_drawdown != 0, total_return / np.abs(max_drawdown), 0.0)
+
+    # Omega ratio (sum of gains / sum of losses)
+    omega = np.zeros(n_strategies)
+    for j in range(n_strategies):
+        gains = returns_series[returns_series[:, j] > 0, j].sum()
+        losses = abs(returns_series[returns_series[:, j] < 0, j].sum())
+        omega[j] = gains / losses if losses > 0 else 0.0
+
+    # Win rate
+    n_returns = max(n_swaps - 1, 1)
+    win_rate = (returns_series > 0).sum(axis=0) / n_returns
+
+    # Profit factor (gross gains / gross losses)
+    profit_factor = np.zeros(n_strategies)
+    for j in range(n_strategies):
+        gains = returns_series[returns_series[:, j] > 0, j].sum()
+        losses = abs(returns_series[returns_series[:, j] < 0, j].sum())
+        profit_factor[j] = gains / losses if losses > 0 else 0.0
+
+    # Recovery time (swaps from max drawdown to recovery)
+    recovery_time = np.zeros(n_strategies, dtype=np.int32)
+    for j in range(n_strategies):
+        dd_idx = np.argmin(drawdowns[:, j])
+        peak_before = cummax[dd_idx, j]
+        recovered = False
+        for k in range(dd_idx, n_swaps):
+            if values_series[k, j] >= peak_before:
+                recovery_time[j] = k - dd_idx
+                recovered = True
+                break
+        if not recovered:
+            recovery_time[j] = n_swaps - dd_idx
+
+    # HODL comparison
+    hodl_return = np.where(
+        initial_capital > 0,
+        (hold_values - initial_capital) / initial_capital,
+        0.0,
+    )
+    lp_vs_hodl = total_return - hodl_return
+
     # Assemble metrics DataFrame
     metrics_df = pd.DataFrame({
         'final_value': final_values,
@@ -265,6 +331,17 @@ def calculate_metrics(
         'total_return': total_return,
         'total_return_pct': total_return * 100,
         'hold_value': hold_values,
+        'var_95': var_95,
+        'var_99': var_99,
+        'cvar_95': cvar_95,
+        'cvar_99': cvar_99,
+        'calmar': calmar,
+        'omega': omega,
+        'win_rate': win_rate,
+        'profit_factor': profit_factor,
+        'recovery_time': recovery_time,
+        'hodl_return': hodl_return,
+        'lp_vs_hodl': lp_vs_hodl,
     })
 
     return metrics_df

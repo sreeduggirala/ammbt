@@ -727,6 +727,7 @@ def _simulate_v3_swaps_nb(
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
     gas_costs: np.ndarray,
+    liquidity_series: np.ndarray,
     tick_indices: np.ndarray,
     liquidity_net: np.ndarray,
     fee_growth_outside_0: np.ndarray,
@@ -786,8 +787,12 @@ def _simulate_v3_swaps_nb(
     sqrt_price_x96 = initial_sqrt_price_x96
     current_tick = price_to_tick((sqrt_price_x96 / Q96_FLOAT) ** 2)
 
+    # Dynamic liquidity support
+    has_dynamic_liquidity = len(liquidity_series) > 0
+
     # Compute initial active liquidity from tick map + base liquidity
-    liquidity = initial_liquidity + _compute_active_liquidity(
+    base_liq = liquidity_series[0] if has_dynamic_liquidity else initial_liquidity
+    liquidity = base_liq + _compute_active_liquidity(
         current_tick, tick_indices, liquidity_net, num_initialized_ticks
     )
 
@@ -803,6 +808,13 @@ def _simulate_v3_swaps_nb(
 
     # Main simulation loop
     for i in range(n_swaps):
+        # Update base liquidity from dynamic series if available
+        if has_dynamic_liquidity:
+            base_liq = liquidity_series[i]
+            liquidity = base_liq + _compute_active_liquidity(
+                current_tick, tick_indices, liquidity_net, num_initialized_ticks
+            )
+
         # Get current price
         current_price = (sqrt_price_x96 / Q96_FLOAT) ** 2
 
@@ -1176,6 +1188,12 @@ class UniswapV3Simulator(BaseAMMSimulator):
         # Extract gas costs
         gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
 
+        # Dynamic pool liquidity (empty array if not provided)
+        if 'liquidity' in swaps.columns:
+            liquidity_series = swaps['liquidity'].values.astype(np.float64)
+        else:
+            liquidity_series = np.empty(0, dtype=np.float64)
+
         # Run simulation
         positions, sqrt_price_hist, tick_hist = _simulate_v3_swaps_nb(
             amount0,
@@ -1187,6 +1205,7 @@ class UniswapV3Simulator(BaseAMMSimulator):
             rebalance_threshold,
             rebalance_frequency,
             gas_costs,
+            liquidity_series,
             tick_indices,
             liquidity_net,
             fee_growth_outside_0,

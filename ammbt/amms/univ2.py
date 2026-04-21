@@ -40,6 +40,7 @@ def _simulate_v2_swaps_nb(
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
     gas_costs: np.ndarray,
+    pool_liquidity_series: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Core Numba-compiled simulation loop for Uniswap V2.
@@ -80,9 +81,11 @@ def _simulate_v2_swaps_nb(
     # Initialize pool state
     reserve0 = initial_reserve0
     reserve1 = initial_reserve1
-    total_supply = 0.0
 
-    # Calculate total liquidity from all positions
+    has_dynamic_liquidity = len(pool_liquidity_series) > 0
+
+    # Calculate total liquidity from all positions (used as fallback)
+    total_supply = 0.0
     for j in range(n_strategies):
         if positions[0, j]['is_active']:
             total_supply += positions[0, j]['liquidity']
@@ -123,7 +126,8 @@ def _simulate_v2_swaps_nb(
                 continue
 
             # Get position's liquidity share
-            liquidity_share = positions[i, j]['liquidity'] / total_supply if total_supply > 0 else 0.0
+            effective_supply = pool_liquidity_series[i] if has_dynamic_liquidity else total_supply
+            liquidity_share = positions[i, j]['liquidity'] / effective_supply if effective_supply > 0 else 0.0
 
             # Update token balances based on current pool ratio
             # For full-range LP: amount0 = liquidity * reserve0 / total_supply
@@ -310,6 +314,12 @@ class UniswapV2Simulator(BaseAMMSimulator):
         # Extract gas costs
         gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
 
+        # Dynamic pool liquidity (empty array if not provided)
+        if 'liquidity' in swaps.columns:
+            pool_liquidity_series = swaps['liquidity'].values.astype(np.float64)
+        else:
+            pool_liquidity_series = np.empty(0, dtype=np.float64)
+
         # Run simulation
         positions, reserve0_hist, reserve1_hist = _simulate_v2_swaps_nb(
             amount0,
@@ -321,6 +331,7 @@ class UniswapV2Simulator(BaseAMMSimulator):
             rebalance_threshold,
             rebalance_frequency,
             gas_costs,
+            pool_liquidity_series,
         )
 
         metadata = {
