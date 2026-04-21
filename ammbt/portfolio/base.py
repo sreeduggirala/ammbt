@@ -129,6 +129,36 @@ class BacktestResult:
 
         return df
 
+    def get_events(self) -> pd.DataFrame:
+        """
+        Get recorded events as a DataFrame.
+
+        Only available if ``record_events=True`` was passed to
+        ``LPBacktester.run()``.
+
+        Returns
+        -------
+        pd.DataFrame
+            Event log with columns: swap_idx, strategy_idx, event_type,
+            event_name, price, token0_amount, token1_amount, gas_cost,
+            extra_0, extra_1.
+
+        Raises
+        ------
+        ValueError
+            If events were not recorded.
+        """
+        if 'event_log' not in self.metadata:
+            raise ValueError(
+                "No events recorded. Run backtest with record_events=True."
+            )
+
+        from ammbt.portfolio.events import events_to_dataframe
+        return events_to_dataframe(
+            self.metadata['event_log'],
+            self.metadata['event_count'],
+        )
+
     def __repr__(self) -> str:
         n_strategies = len(self.metrics)
         best_pnl = self.metrics['net_pnl'].max()
@@ -196,6 +226,7 @@ class LPBacktester:
         self,
         swaps: pd.DataFrame,
         strategies: Union[Dict[str, List], pd.DataFrame],
+        record_events: bool = False,
     ) -> BacktestResult:
         """
         Run backtest.
@@ -307,6 +338,13 @@ class LPBacktester:
                         f"Strategy {j}: bin_lower ({strategy_params[j]['bin_lower']}) "
                         f"must be less than bin_upper ({strategy_params[j]['bin_upper']})"
                     )
+
+        # Allocate event log if recording is enabled
+        if record_events:
+            from ammbt.portfolio.events import allocate_event_log
+            self.simulator._event_log = allocate_event_log(n_swaps, n_strategies)
+        elif hasattr(self.simulator, '_event_log'):
+            del self.simulator._event_log
 
         # Initialize positions
         positions = self.simulator.initialize_positions(

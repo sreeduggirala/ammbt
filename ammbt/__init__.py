@@ -43,8 +43,8 @@ from ammbt.utils.math import (
     price_to_bin_id,
 )
 
-# Data loaders
-from ammbt.data import SubgraphLoader, FileLoader
+# Data loaders and streaming
+from ammbt.data import SubgraphLoader, FileLoader, SwapStream, IncrementalSimulator
 
 __all__ = [
     # Core
@@ -74,7 +74,9 @@ __all__ = [
     "sqrt_price_to_tick",
     "bin_id_to_price",
     "price_to_bin_id",
-    # Data loaders
+    # Data loaders and streaming
     "SubgraphLoader",
     "FileLoader",
+    "SwapStream",
+    "IncrementalSimulator",
 ]

@@ -9,9 +9,12 @@ Provides loaders for various data sources:
 from ammbt.data.base import BaseSwapLoader
 from ammbt.data.file_loader import FileLoader
 from ammbt.data.subgraph import SubgraphLoader
+from ammbt.data.stream import SwapStream, IncrementalSimulator
 
 __all__ = [
     "BaseSwapLoader",
     "FileLoader",
     "SubgraphLoader",
+    "SwapStream",
+    "IncrementalSimulator",
 ]

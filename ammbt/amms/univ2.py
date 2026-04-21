@@ -13,6 +13,7 @@ from typing import Dict, Any, Tuple
 from ammbt.amms.base import BaseAMMSimulator
 from ammbt.utils.math import get_amount_out
 from ammbt.utils.config import Config
+from ammbt.portfolio.events import record_event
 
 
 # Define structured array dtype for V2 positions
@@ -41,7 +42,9 @@ def _simulate_v2_swaps_nb(
     rebalance_frequency: np.ndarray,
     gas_costs: np.ndarray,
     pool_liquidity_series: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    event_log: np.ndarray,
+    event_count: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Core Numba-compiled simulation loop for Uniswap V2.
 
@@ -117,6 +120,14 @@ def _simulate_v2_swaps_nb(
         # Current price
         current_price = reserve1 / reserve0 if reserve0 > 0 else 1.0
 
+        # Record swap event
+        has_events = len(event_log) > 0
+        if has_events:
+            event_count = record_event(
+                event_log, event_count, i, -1, 0,  # EVENT_SWAP=0, strategy=-1 (pool-level)
+                current_price, swap_amounts_0[i], swap_amounts_1[i],
+            )
+
         # 2. Update all positions (vectorized across strategies)
         for j in range(n_strategies):
             if not positions[i, j]['is_active']:
@@ -163,26 +174,23 @@ def _simulate_v2_swaps_nb(
 
             if should_rebalance:
                 # Execute rebalance
-                # In V2, rebalancing means removing and re-adding liquidity
-                # This incurs gas costs
-                # For simplicity: assume fixed gas cost per rebalance
                 gas_cost_usd = gas_costs[j]
                 positions[i, j]['gas_spent'] += gas_cost_usd
-
-                # Update rebalance tracking
                 positions[i, j]['last_rebalance_idx'] = i
                 positions[i, j]['num_rebalances'] += 1
 
-                # Collect fees on rebalance
-                # (In practice, fees are auto-compounded in v2)
-                # positions[i, j]['uncollected_fees_0'] = 0.0
-                # positions[i, j]['uncollected_fees_1'] = 0.0
+                # Record rebalance event
+                if has_events:
+                    event_count = record_event(
+                        event_log, event_count, i, j, 4,  # EVENT_REBALANCE=4
+                        current_price, 0.0, 0.0, gas_cost_usd,
+                    )
 
             # Copy forward for next iteration
             if i < n_swaps - 1:
                 positions[i+1, j] = positions[i, j]
 
-    return positions, reserve0_history, reserve1_history
+    return positions, reserve0_history, reserve1_history, event_log, event_count
 
 
 class UniswapV2Simulator(BaseAMMSimulator):
@@ -320,8 +328,16 @@ class UniswapV2Simulator(BaseAMMSimulator):
         else:
             pool_liquidity_series = np.empty(0, dtype=np.float64)
 
+        # Event log (empty array = disabled, non-empty = enabled)
+        event_log = self._event_log if hasattr(self, '_event_log') else np.empty(0, dtype=[
+            ('swap_idx', 'i4'), ('strategy_idx', 'i4'), ('event_type', 'i4'),
+            ('price', 'f8'), ('token0_amount', 'f8'), ('token1_amount', 'f8'),
+            ('gas_cost', 'f8'), ('extra_0', 'f8'), ('extra_1', 'f8'),
+        ])
+        event_count = 0
+
         # Run simulation
-        positions, reserve0_hist, reserve1_hist = _simulate_v2_swaps_nb(
+        positions, reserve0_hist, reserve1_hist, event_log, event_count = _simulate_v2_swaps_nb(
             amount0,
             amount1,
             positions,
@@ -332,11 +348,17 @@ class UniswapV2Simulator(BaseAMMSimulator):
             rebalance_frequency,
             gas_costs,
             pool_liquidity_series,
+            event_log,
+            event_count,
         )
 
         metadata = {
             'reserve0_history': reserve0_hist,
             'reserve1_history': reserve1_hist,
         }
+
+        if len(event_log) > 0:
+            metadata['event_log'] = event_log
+            metadata['event_count'] = event_count
 
         return positions, metadata
