@@ -159,15 +159,20 @@ def _build_tick_map(
     if tick_count == 0:
         return 0
 
-    # Sort ticks using simple bubble sort (small n)
-    for i in range(tick_count):
-        for k in range(i + 1, tick_count):
-            if temp_ticks[k] < temp_ticks[i]:
-                # Swap ticks
-                temp_ticks[i], temp_ticks[k] = temp_ticks[k], temp_ticks[i]
-                # Swap liquidity
-                temp_liq_lower[i], temp_liq_lower[k] = temp_liq_lower[k], temp_liq_lower[i]
-                temp_liq_upper[i], temp_liq_upper[k] = temp_liq_upper[k], temp_liq_upper[i]
+    # Sort ticks using insertion sort (O(n) best case, Numba-compatible)
+    for i in range(1, tick_count):
+        key_tick = temp_ticks[i]
+        key_liq_lower = temp_liq_lower[i]
+        key_liq_upper = temp_liq_upper[i]
+        k = i - 1
+        while k >= 0 and temp_ticks[k] > key_tick:
+            temp_ticks[k + 1] = temp_ticks[k]
+            temp_liq_lower[k + 1] = temp_liq_lower[k]
+            temp_liq_upper[k + 1] = temp_liq_upper[k]
+            k -= 1
+        temp_ticks[k + 1] = key_tick
+        temp_liq_lower[k + 1] = key_liq_lower
+        temp_liq_upper[k + 1] = key_liq_upper
 
     # Compute net liquidity at each tick and initialize fee_growth_outside
     num_ticks = min(tick_count, len(tick_indices))
@@ -721,6 +726,7 @@ def _simulate_v3_swaps_nb(
     fee_tier: int,
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
+    gas_costs: np.ndarray,
     tick_indices: np.ndarray,
     liquidity_net: np.ndarray,
     fee_growth_outside_0: np.ndarray,
@@ -957,7 +963,7 @@ def _simulate_v3_swaps_nb(
 
             if should_rebalance:
                 # Execute rebalance
-                gas_cost_usd = 100.0  # v3 rebalancing is more expensive
+                gas_cost_usd = gas_costs[j]
                 positions[i, j]['gas_spent'] += gas_cost_usd
                 positions[i, j]['last_rebalance_idx'] = i
                 positions[i, j]['num_rebalances'] += 1
@@ -1167,6 +1173,9 @@ class UniswapV3Simulator(BaseAMMSimulator):
             0.0,  # Initial fee_growth_global_1
         )
 
+        # Extract gas costs
+        gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
+
         # Run simulation
         positions, sqrt_price_hist, tick_hist = _simulate_v3_swaps_nb(
             amount0,
@@ -1177,6 +1186,7 @@ class UniswapV3Simulator(BaseAMMSimulator):
             fee_tier,
             rebalance_threshold,
             rebalance_frequency,
+            gas_costs,
             tick_indices,
             liquidity_net,
             fee_growth_outside_0,

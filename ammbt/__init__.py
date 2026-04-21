@@ -4,7 +4,7 @@ AMMBT - AMM Backtesting Engine
 High-performance vectorized backtesting for AMM liquidity provider positions.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from ammbt.portfolio.base import LPBacktester
 from ammbt.plotting.core import (

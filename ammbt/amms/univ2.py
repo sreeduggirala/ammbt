@@ -39,6 +39,7 @@ def _simulate_v2_swaps_nb(
     fee_rate: float,
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
+    gas_costs: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Core Numba-compiled simulation loop for Uniswap V2.
@@ -161,7 +162,7 @@ def _simulate_v2_swaps_nb(
                 # In V2, rebalancing means removing and re-adding liquidity
                 # This incurs gas costs
                 # For simplicity: assume fixed gas cost per rebalance
-                gas_cost_usd = 50.0  # TODO: Make this configurable
+                gas_cost_usd = gas_costs[j]
                 positions[i, j]['gas_spent'] += gas_cost_usd
 
                 # Update rebalance tracking
@@ -306,6 +307,9 @@ class UniswapV2Simulator(BaseAMMSimulator):
         rebalance_threshold = strategy_params['rebalance_threshold']
         rebalance_frequency = strategy_params['rebalance_frequency'].astype(np.int32)
 
+        # Extract gas costs
+        gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
+
         # Run simulation
         positions, reserve0_hist, reserve1_hist = _simulate_v2_swaps_nb(
             amount0,
@@ -316,6 +320,7 @@ class UniswapV2Simulator(BaseAMMSimulator):
             self.pool_params['fee_rate'],
             rebalance_threshold,
             rebalance_frequency,
+            gas_costs,
         )
 
         metadata = {

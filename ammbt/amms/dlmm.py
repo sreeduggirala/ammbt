@@ -201,6 +201,7 @@ def _simulate_dlmm_swaps_nb(
     decay_period: int,
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
+    gas_costs: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Core Numba-compiled simulation loop for DLMM.
@@ -288,6 +289,7 @@ def _simulate_dlmm_swaps_nb(
 
             # Price impact (simplified linear model)
             price_impact = amount_after_fee / pool_liquidity * 0.01
+            price_impact = min(price_impact, 0.99)  # Cap to prevent sign flip
             current_price = current_price * (1 - price_impact)
             current_price = max(1e-10, current_price)
 
@@ -302,6 +304,7 @@ def _simulate_dlmm_swaps_nb(
 
             # Price impact
             price_impact = amount_after_fee / pool_liquidity * 0.01
+            price_impact = min(price_impact, 0.99)  # Cap to prevent absurd jumps
             current_price = current_price * (1 + price_impact)
 
             # Update fee growth
@@ -401,7 +404,7 @@ def _simulate_dlmm_swaps_nb(
 
             if should_rebalance:
                 # Execute rebalance (re-center around current price)
-                gas_cost_usd = 0.5  # Solana gas is much cheaper
+                gas_cost_usd = gas_costs[j]
                 positions[i, j]['gas_spent'] += gas_cost_usd
                 positions[i, j]['last_rebalance_idx'] = i
                 positions[i, j]['num_rebalances'] += 1
@@ -580,6 +583,7 @@ class MeteoraLMMSimulator(BaseAMMSimulator):
         # Extract strategy parameters
         rebalance_threshold = strategy_params['rebalance_threshold'].astype(np.float64)
         rebalance_frequency = strategy_params['rebalance_frequency'].astype(np.int32)
+        gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
 
         # Run simulation
         positions, price_hist, bin_hist, fee_hist = _simulate_dlmm_swaps_nb(
@@ -596,6 +600,7 @@ class MeteoraLMMSimulator(BaseAMMSimulator):
             self.pool_params['decay_period'],
             rebalance_threshold,
             rebalance_frequency,
+            gas_costs,
         )
 
         metadata = {

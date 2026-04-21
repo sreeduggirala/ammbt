@@ -38,15 +38,26 @@ def plot_performance(
     # Calculate total value over time
     if 'price' in result.metadata:
         prices = result.metadata['price']
+    elif 'price_history' in result.metadata:
+        prices = result.metadata['price_history']
     else:
         prices = result.metadata['reserve1_history'] / result.metadata['reserve0_history']
 
-    values = (
-        position_history['token0_balance'] * prices +
-        position_history['token1_balance'] +
-        position_history['uncollected_fees_0'] * prices +
-        position_history['uncollected_fees_1']
-    )
+    amm_type = result.metadata.get('amm_type', 'v3')
+    if amm_type == 'v2':
+        # V2: fees auto-compound into token balances
+        values = (
+            position_history['token0_balance'] * prices +
+            position_history['token1_balance']
+        )
+    else:
+        # V3/DLMM: uncollected fees are separate value
+        values = (
+            position_history['token0_balance'] * prices +
+            position_history['token1_balance'] +
+            position_history['uncollected_fees_0'] * prices +
+            position_history['uncollected_fees_1']
+        )
 
     # Create subplots
     n_rows = 3 if show_reserves else 2

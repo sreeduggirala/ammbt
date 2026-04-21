@@ -116,6 +116,8 @@ def price_to_tick(price: float) -> int:
     >>> price_to_tick(1.0001)
     1
     """
+    if price <= 0.0:
+        return -887272  # MIN_TICK
     return int(np.floor(np.log(price) / np.log(1.0001)))
 
 
@@ -327,6 +329,10 @@ def get_liquidity_for_amounts(
     """
     Q96_FLOAT = 79228162514264337593543950336.0
 
+    # Guard: if range has zero width, no liquidity can be deployed
+    if sqrt_price_b_x96 <= sqrt_price_a_x96:
+        return 0.0
+
     if sqrt_price_x96 <= sqrt_price_a_x96:
         # Price below range, all token0
         liquidity = (
@@ -382,6 +388,12 @@ def get_amounts_for_liquidity(
     sqrt_price = sqrt_price_x96 / Q96_FLOAT
     sqrt_price_a = sqrt_price_a_x96 / Q96_FLOAT
     sqrt_price_b = sqrt_price_b_x96 / Q96_FLOAT
+
+    # Guard: prevent division by zero from degenerate sqrt prices
+    if sqrt_price_a <= 0.0 or sqrt_price_b <= 0.0:
+        return (0.0, 0.0)
+    if sqrt_price_b <= sqrt_price_a:
+        return (0.0, 0.0)
 
     if sqrt_price <= sqrt_price_a:
         # Price below range

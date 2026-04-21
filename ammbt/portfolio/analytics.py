@@ -105,6 +105,7 @@ def calculate_metrics(
     positions: np.ndarray,
     prices: np.ndarray,
     initial_capital: np.ndarray,
+    amm_type: str = 'v3',
 ) -> pd.DataFrame:
     """
     Calculate comprehensive performance metrics (vectorized).
@@ -152,17 +153,26 @@ def calculate_metrics(
         # Final position state
         final_pos = positions[-1, j]
 
-        # Calculate final value
-        final_value = calculate_position_value(
-            final_pos['token0_balance'],
-            final_pos['token1_balance'],
-            final_pos['uncollected_fees_0'],
-            final_pos['uncollected_fees_1'],
-            final_price,
-        )
+        # Calculate final value (AMM-type-aware)
+        if amm_type == 'v2':
+            # V2: fees auto-compound into reserves, so token balances already
+            # include fees. uncollected_fees_0/1 are cumulative trackers only.
+            final_value = (
+                final_pos['token0_balance'] * final_price +
+                final_pos['token1_balance']
+            )
+        else:
+            # V3/DLMM: uncollected fees are real uncollected value
+            final_value = calculate_position_value(
+                final_pos['token0_balance'],
+                final_pos['token1_balance'],
+                final_pos['uncollected_fees_0'],
+                final_pos['uncollected_fees_1'],
+                final_price,
+            )
         final_values[j] = final_value
 
-        # Total fees
+        # Total fees (informational — cumulative tracker for all AMM types)
         total_fees[j] = (
             final_pos['uncollected_fees_0'] * final_price +
             final_pos['uncollected_fees_1']
@@ -177,9 +187,8 @@ def calculate_metrics(
         )
         hold_values[j] = hold_value
 
-        # Impermanent loss
-        lp_value_without_fees = final_value - total_fees[j]
-        il[j] = calculate_impermanent_loss(lp_value_without_fees, hold_value)
+        # Impermanent loss: compare LP value vs hold value directly
+        il[j] = calculate_impermanent_loss(final_value, hold_value)
 
         # PnL
         gross_pnl[j] = final_value - initial_capital[j]
@@ -191,13 +200,20 @@ def calculate_metrics(
 
     for j in range(n_strategies):
         for i in range(n_swaps):
-            values_series[i, j] = calculate_position_value(
-                positions[i, j]['token0_balance'],
-                positions[i, j]['token1_balance'],
-                positions[i, j]['uncollected_fees_0'],
-                positions[i, j]['uncollected_fees_1'],
-                prices[i],
-            )
+            if amm_type == 'v2':
+                # V2: fees already in token balances
+                values_series[i, j] = (
+                    positions[i, j]['token0_balance'] * prices[i] +
+                    positions[i, j]['token1_balance']
+                )
+            else:
+                values_series[i, j] = calculate_position_value(
+                    positions[i, j]['token0_balance'],
+                    positions[i, j]['token1_balance'],
+                    positions[i, j]['uncollected_fees_0'],
+                    positions[i, j]['uncollected_fees_1'],
+                    prices[i],
+                )
 
         # Calculate returns
         for i in range(1, n_swaps):
@@ -257,6 +273,7 @@ def calculate_metrics(
 def calculate_capital_efficiency(
     positions: np.ndarray,
     prices: np.ndarray,
+    amm_type: str = 'v3',
 ) -> pd.DataFrame:
     """
     Calculate capital efficiency metrics.
@@ -285,23 +302,27 @@ def calculate_capital_efficiency(
     utilization = np.zeros(n_strategies)
 
     for j in range(n_strategies):
-        initial_value = calculate_position_value(
-            positions[0, j]['token0_balance'],
-            positions[0, j]['token1_balance'],
-            0, 0,
-            prices[0],
+        initial_value = (
+            positions[0, j]['token0_balance'] * prices[0] +
+            positions[0, j]['token1_balance']
         )
 
         if initial_value > 0:
             avg_value = 0
             for i in range(n_swaps):
-                value = calculate_position_value(
-                    positions[i, j]['token0_balance'],
-                    positions[i, j]['token1_balance'],
-                    positions[i, j]['uncollected_fees_0'],
-                    positions[i, j]['uncollected_fees_1'],
-                    prices[i],
-                )
+                if amm_type == 'v2':
+                    value = (
+                        positions[i, j]['token0_balance'] * prices[i] +
+                        positions[i, j]['token1_balance']
+                    )
+                else:
+                    value = calculate_position_value(
+                        positions[i, j]['token0_balance'],
+                        positions[i, j]['token1_balance'],
+                        positions[i, j]['uncollected_fees_0'],
+                        positions[i, j]['uncollected_fees_1'],
+                        prices[i],
+                    )
                 avg_value += value / n_swaps
 
             utilization[j] = avg_value / initial_value
