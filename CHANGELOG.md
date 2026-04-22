@@ -2,7 +2,7 @@
 
 All notable changes to ammbt will be documented in this file.
 
-## [0.3.0] - Unreleased
+## [0.3.0]
 
 ### Added
 - **Data loaders**: `SubgraphLoader` (The Graph V2/V3), `FileLoader` (CSV/Parquet) with schema validation
@@ -31,7 +31,7 @@ All notable changes to ammbt will be documented in this file.
 - **Gas costs configurable**: `gas_cost_usd` field in all strategy param dtypes (defaults: V2=$50, V3=$100, DLMM=$0.50)
 - **Input validation**: `LPBacktester.run()` validates non-empty swaps, positive capital, and valid tick/bin ranges
 
-## [0.2.0] - 2024-12-01
+## [0.2.0]
 
 ### Added
 - Tick-by-tick swap processing for Uniswap V3 simulator
@@ -39,7 +39,7 @@ All notable changes to ammbt will be documented in this file.
 - Strategy grid generators for V3 and DLMM
 - Plotly visualization (performance, heatmap, efficient frontier, PnL distribution)
 
-## [0.1.0] - 2024-10-01
+## [0.1.0]
 
 ### Added
 - Initial release
