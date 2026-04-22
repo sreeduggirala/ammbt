@@ -421,9 +421,10 @@ class TestIntegration:
             ('tick_upper', 'i4'),
             ('rebalance_threshold', 'f8'),
             ('rebalance_frequency', 'i4'),
+            ('gas_cost_usd', 'f8'),
         ])
         strategy_params = np.array([
-            (10000.0, -1000, 1000, 0.0, 0),
+            (10000.0, -1000, 1000, 0.0, 0, 100.0),
         ], dtype=strategy_dtype)
 
         # Create positions
@@ -473,10 +474,11 @@ class TestIntegration:
             ('tick_upper', 'i4'),
             ('rebalance_threshold', 'f8'),
             ('rebalance_frequency', 'i4'),
+            ('gas_cost_usd', 'f8'),
         ])
         # Use tick-spacing-aligned bounds
         strategy_params = np.array([
-            (10000.0, -600, 600, 0.01, 1),  # Low threshold, rebalance every swap
+            (10000.0, -600, 600, 0.01, 1, 100.0),  # Low threshold, rebalance every swap
         ], dtype=strategy_dtype)
 
         n_swaps = 20

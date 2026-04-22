@@ -13,6 +13,14 @@ import numba
 from typing import Dict, Any, Tuple
 
 from ammbt.amms.base import BaseAMMSimulator
+from ammbt.portfolio.events import record_event
+from ammbt.utils.rebalance import (
+    should_rebalance as _should_rebalance_fn,
+    compute_new_bin_range,
+    compute_rolling_volatility,
+    compute_price_momentum,
+    REBALANCE_STATIC,
+)
 from ammbt.utils.math import (
     bin_id_to_price,
     price_to_bin_id,
@@ -201,7 +209,12 @@ def _simulate_dlmm_swaps_nb(
     decay_period: int,
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    gas_costs: np.ndarray,
+    rebalance_strategies: np.ndarray,
+    pool_liquidity_series: np.ndarray,
+    event_log: np.ndarray,
+    event_count: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Core Numba-compiled simulation loop for DLMM.
 
@@ -257,11 +270,23 @@ def _simulate_dlmm_swaps_nb(
     fee_growth_global_x = 0.0
     fee_growth_global_y = 0.0
 
-    # Simplified: assume uniform pool liquidity
-    pool_liquidity = 1_000_000.0
+    # Pool liquidity: use dynamic series if provided, else fixed default
+    has_dynamic_liquidity = len(pool_liquidity_series) > 0
+    pool_liquidity = pool_liquidity_series[0] if has_dynamic_liquidity else 1_000_000.0
+
+    # Price buffer for volatility/momentum tracking
+    price_buffer = np.zeros(n_swaps, dtype=np.float64)
+    price_buffer[0] = initial_price
+
+    # Event recording
+    has_events = len(event_log) > 0
 
     # Main simulation loop
     for i in range(n_swaps):
+        # Update pool liquidity from dynamic series if available
+        if has_dynamic_liquidity:
+            pool_liquidity = pool_liquidity_series[i]
+
         current_timestamp = timestamps[i]
         time_elapsed = int(current_timestamp - last_timestamp)
 
@@ -288,6 +313,7 @@ def _simulate_dlmm_swaps_nb(
 
             # Price impact (simplified linear model)
             price_impact = amount_after_fee / pool_liquidity * 0.01
+            price_impact = min(price_impact, 0.99)  # Cap to prevent sign flip
             current_price = current_price * (1 - price_impact)
             current_price = max(1e-10, current_price)
 
@@ -302,6 +328,7 @@ def _simulate_dlmm_swaps_nb(
 
             # Price impact
             price_impact = amount_after_fee / pool_liquidity * 0.01
+            price_impact = min(price_impact, 0.99)  # Cap to prevent absurd jumps
             current_price = current_price * (1 + price_impact)
 
             # Update fee growth
@@ -330,7 +357,15 @@ def _simulate_dlmm_swaps_nb(
         # Store history
         price_history[i] = current_price
         active_bin_history[i] = active_bin
+        price_buffer[i] = current_price
         last_timestamp = current_timestamp
+
+        # Record swap event
+        if has_events:
+            event_count = record_event(
+                event_log, event_count, i, -1, 0,  # EVENT_SWAP=0
+                current_price, swap_amounts_x[i], swap_amounts_y[i],
+            )
 
         # 2. Update all positions
         for j in range(n_strategies):
@@ -383,33 +418,38 @@ def _simulate_dlmm_swaps_nb(
             positions[i, j]['fee_growth_global_x'] = fee_growth_global_x
             positions[i, j]['fee_growth_global_y'] = fee_growth_global_y
 
-            # 3. Check rebalancing conditions
-            price_deviation = abs(current_price - initial_price) / initial_price
+            # 3. Check rebalancing conditions (pluggable strategy)
             swaps_since_rebalance = i - pos['last_rebalance_idx']
+            vol = compute_rolling_volatility(price_buffer, i, 100)
+            strat_type = rebalance_strategies[j]
 
-            should_rebalance = False
+            do_rebalance = _should_rebalance_fn(
+                strat_type,
+                current_price,
+                initial_price,
+                is_in_range,
+                rebalance_threshold[j],
+                swaps_since_rebalance,
+                rebalance_frequency[j],
+                vol,
+            )
 
-            # Price-based rebalancing
-            if rebalance_threshold[j] > 0 and price_deviation >= rebalance_threshold[j]:
-                if swaps_since_rebalance >= rebalance_frequency[j]:
-                    should_rebalance = True
-
-            # Out of range rebalancing
-            if not is_in_range and swaps_since_rebalance >= rebalance_frequency[j]:
-                if rebalance_frequency[j] > 0:
-                    should_rebalance = True
-
-            if should_rebalance:
-                # Execute rebalance (re-center around current price)
-                gas_cost_usd = 0.5  # Solana gas is much cheaper
+            if do_rebalance:
+                gas_cost_usd = gas_costs[j]
                 positions[i, j]['gas_spent'] += gas_cost_usd
                 positions[i, j]['last_rebalance_idx'] = i
                 positions[i, j]['num_rebalances'] += 1
 
-                # Re-center range
-                bin_width = bin_upper - bin_lower
-                new_bin_lower = active_bin - bin_width // 2
-                new_bin_upper = active_bin + bin_width // 2
+                # Compute new range using pluggable strategy
+                momentum = compute_price_momentum(price_buffer, i, 50)
+                new_bin_lower, new_bin_upper = compute_new_bin_range(
+                    strat_type,
+                    active_bin,
+                    bin_lower,
+                    bin_upper,
+                    vol,
+                    momentum,
+                )
 
                 positions[i, j]['bin_lower'] = new_bin_lower
                 positions[i, j]['bin_upper'] = new_bin_upper
@@ -419,11 +459,19 @@ def _simulate_dlmm_swaps_nb(
                 positions[i, j]['fee_growth_global_x'] = fee_growth_global_x
                 positions[i, j]['fee_growth_global_y'] = fee_growth_global_y
 
+                # Record rebalance event
+                if has_events:
+                    event_count = record_event(
+                        event_log, event_count, i, j, 4,  # EVENT_REBALANCE=4
+                        current_price, 0.0, 0.0, gas_cost_usd,
+                        float(new_bin_lower), float(new_bin_upper),
+                    )
+
             # Copy forward for next iteration
             if i < n_swaps - 1:
                 positions[i+1, j] = positions[i, j]
 
-    return positions, price_history, active_bin_history, fee_history
+    return positions, price_history, active_bin_history, fee_history, event_log, event_count
 
 
 class MeteoraLMMSimulator(BaseAMMSimulator):
@@ -580,9 +628,26 @@ class MeteoraLMMSimulator(BaseAMMSimulator):
         # Extract strategy parameters
         rebalance_threshold = strategy_params['rebalance_threshold'].astype(np.float64)
         rebalance_frequency = strategy_params['rebalance_frequency'].astype(np.int32)
+        gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
+        if 'rebalance_strategy' in strategy_params.dtype.names:
+            rebalance_strategies = strategy_params['rebalance_strategy'].astype(np.int32)
+        else:
+            n_strats = len(strategy_params)
+            rebalance_strategies = np.zeros(n_strats, dtype=np.int32)
+
+        # Dynamic pool liquidity (empty array if not provided)
+        if 'liquidity' in swaps.columns:
+            pool_liquidity_series = swaps['liquidity'].values.astype(np.float64)
+        else:
+            pool_liquidity_series = np.empty(0, dtype=np.float64)
+
+        # Event log (empty array = disabled)
+        from ammbt.portfolio.events import EVENT_DTYPE
+        event_log = self._event_log if hasattr(self, '_event_log') else np.empty(0, dtype=EVENT_DTYPE)
+        event_count = 0
 
         # Run simulation
-        positions, price_hist, bin_hist, fee_hist = _simulate_dlmm_swaps_nb(
+        positions, price_hist, bin_hist, fee_hist, event_log, event_count = _simulate_dlmm_swaps_nb(
             amount_x,
             amount_y,
             timestamps,
@@ -596,6 +661,11 @@ class MeteoraLMMSimulator(BaseAMMSimulator):
             self.pool_params['decay_period'],
             rebalance_threshold,
             rebalance_frequency,
+            gas_costs,
+            rebalance_strategies,
+            pool_liquidity_series,
+            event_log,
+            event_count,
         )
 
         metadata = {
@@ -604,6 +674,10 @@ class MeteoraLMMSimulator(BaseAMMSimulator):
             'fee_history': fee_hist,
             'bin_step': self.pool_params['bin_step'],
         }
+
+        if len(event_log) > 0:
+            metadata['event_log'] = event_log
+            metadata['event_count'] = event_count
 
         return positions, metadata
 

@@ -24,6 +24,14 @@ from ammbt.utils.math import (
     Q96,
 )
 from ammbt.utils.config import Config
+from ammbt.portfolio.events import record_event
+from ammbt.utils.rebalance import (
+    should_rebalance as _should_rebalance_fn,
+    compute_new_tick_range,
+    compute_rolling_volatility,
+    compute_price_momentum,
+    REBALANCE_STATIC,
+)
 
 
 # Maximum number of initialized ticks to track
@@ -159,15 +167,20 @@ def _build_tick_map(
     if tick_count == 0:
         return 0
 
-    # Sort ticks using simple bubble sort (small n)
-    for i in range(tick_count):
-        for k in range(i + 1, tick_count):
-            if temp_ticks[k] < temp_ticks[i]:
-                # Swap ticks
-                temp_ticks[i], temp_ticks[k] = temp_ticks[k], temp_ticks[i]
-                # Swap liquidity
-                temp_liq_lower[i], temp_liq_lower[k] = temp_liq_lower[k], temp_liq_lower[i]
-                temp_liq_upper[i], temp_liq_upper[k] = temp_liq_upper[k], temp_liq_upper[i]
+    # Sort ticks using insertion sort (O(n) best case, Numba-compatible)
+    for i in range(1, tick_count):
+        key_tick = temp_ticks[i]
+        key_liq_lower = temp_liq_lower[i]
+        key_liq_upper = temp_liq_upper[i]
+        k = i - 1
+        while k >= 0 and temp_ticks[k] > key_tick:
+            temp_ticks[k + 1] = temp_ticks[k]
+            temp_liq_lower[k + 1] = temp_liq_lower[k]
+            temp_liq_upper[k + 1] = temp_liq_upper[k]
+            k -= 1
+        temp_ticks[k + 1] = key_tick
+        temp_liq_lower[k + 1] = key_liq_lower
+        temp_liq_upper[k + 1] = key_liq_upper
 
     # Compute net liquidity at each tick and initialize fee_growth_outside
     num_ticks = min(tick_count, len(tick_indices))
@@ -721,13 +734,18 @@ def _simulate_v3_swaps_nb(
     fee_tier: int,
     rebalance_threshold: np.ndarray,
     rebalance_frequency: np.ndarray,
+    gas_costs: np.ndarray,
+    rebalance_strategies: np.ndarray,
+    liquidity_series: np.ndarray,
     tick_indices: np.ndarray,
     liquidity_net: np.ndarray,
     fee_growth_outside_0: np.ndarray,
     fee_growth_outside_1: np.ndarray,
     num_initialized_ticks: int,
     tick_spacing: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    event_log: np.ndarray,
+    event_count: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """
     Core Numba-compiled simulation loop for Uniswap V3 with tick-by-tick processing.
 
@@ -780,8 +798,12 @@ def _simulate_v3_swaps_nb(
     sqrt_price_x96 = initial_sqrt_price_x96
     current_tick = price_to_tick((sqrt_price_x96 / Q96_FLOAT) ** 2)
 
+    # Dynamic liquidity support
+    has_dynamic_liquidity = len(liquidity_series) > 0
+
     # Compute initial active liquidity from tick map + base liquidity
-    liquidity = initial_liquidity + _compute_active_liquidity(
+    base_liq = liquidity_series[0] if has_dynamic_liquidity else initial_liquidity
+    liquidity = base_liq + _compute_active_liquidity(
         current_tick, tick_indices, liquidity_net, num_initialized_ticks
     )
 
@@ -795,8 +817,22 @@ def _simulate_v3_swaps_nb(
     # Calculate initial price
     initial_price = (sqrt_price_x96 / Q96_FLOAT) ** 2
 
+    # Price history buffer for volatility/momentum tracking
+    price_buffer = np.zeros(n_swaps, dtype=np.float64)
+    price_buffer[0] = initial_price
+
+    # Event recording
+    has_events = len(event_log) > 0
+
     # Main simulation loop
     for i in range(n_swaps):
+        # Update base liquidity from dynamic series if available
+        if has_dynamic_liquidity:
+            base_liq = liquidity_series[i]
+            liquidity = base_liq + _compute_active_liquidity(
+                current_tick, tick_indices, liquidity_net, num_initialized_ticks
+            )
+
         # Get current price
         current_price = (sqrt_price_x96 / Q96_FLOAT) ** 2
 
@@ -863,6 +899,14 @@ def _simulate_v3_swaps_nb(
         sqrt_price_history[i] = sqrt_price_x96
         liquidity_history[i] = liquidity
         tick_history[i] = current_tick
+        price_buffer[i] = current_price
+
+        # Record swap event
+        if has_events:
+            event_count = record_event(
+                event_log, event_count, i, -1, 0,  # EVENT_SWAP=0
+                current_price, swap_amounts_0[i], swap_amounts_1[i],
+            )
 
         # 2. Update all positions
         for j in range(n_strategies):
@@ -939,40 +983,40 @@ def _simulate_v3_swaps_nb(
             positions[i, j]['fee_growth_inside_0_last'] = fee_growth_inside_0
             positions[i, j]['fee_growth_inside_1_last'] = fee_growth_inside_1
 
-            # 3. Check rebalancing conditions
-            price_deviation = abs(current_price - initial_price) / initial_price
+            # 3. Check rebalancing conditions (pluggable strategy)
             swaps_since_rebalance = i - pos['last_rebalance_idx']
+            vol = compute_rolling_volatility(price_buffer, i, 100)
+            strat_type = rebalance_strategies[j]
 
-            should_rebalance = False
+            do_rebalance = _should_rebalance_fn(
+                strat_type,
+                current_price,
+                initial_price,
+                is_in_range,
+                rebalance_threshold[j],
+                swaps_since_rebalance,
+                rebalance_frequency[j],
+                vol,
+            )
 
-            # Price-based rebalancing
-            if rebalance_threshold[j] > 0 and price_deviation >= rebalance_threshold[j]:
-                if swaps_since_rebalance >= rebalance_frequency[j]:
-                    should_rebalance = True
-
-            # Out of range rebalancing
-            if not is_in_range and swaps_since_rebalance >= rebalance_frequency[j]:
-                if rebalance_frequency[j] > 0:
-                    should_rebalance = True
-
-            if should_rebalance:
+            if do_rebalance:
                 # Execute rebalance
-                gas_cost_usd = 100.0  # v3 rebalancing is more expensive
+                gas_cost_usd = gas_costs[j]
                 positions[i, j]['gas_spent'] += gas_cost_usd
                 positions[i, j]['last_rebalance_idx'] = i
                 positions[i, j]['num_rebalances'] += 1
 
-                # Re-center range around current price with proper tick spacing
-                tick_width = tick_upper - tick_lower
-                half_width = tick_width // 2
-
-                # Round new ticks to tick spacing
-                new_tick_lower = floor_tick_to_spacing(current_tick - half_width, tick_spacing)
-                new_tick_upper = ceil_tick_to_spacing(current_tick + half_width, tick_spacing)
-
-                # Ensure minimum width
-                if new_tick_upper <= new_tick_lower:
-                    new_tick_upper = new_tick_lower + tick_spacing
+                # Compute new range using pluggable strategy
+                momentum = compute_price_momentum(price_buffer, i, 50)
+                new_tick_lower, new_tick_upper = compute_new_tick_range(
+                    strat_type,
+                    current_tick,
+                    tick_lower,
+                    tick_upper,
+                    tick_spacing,
+                    vol,
+                    momentum,
+                )
 
                 positions[i, j]['tick_lower'] = new_tick_lower
                 positions[i, j]['tick_upper'] = new_tick_upper
@@ -982,11 +1026,19 @@ def _simulate_v3_swaps_nb(
                 positions[i, j]['fee_growth_inside_0_last'] = fee_growth_global_0
                 positions[i, j]['fee_growth_inside_1_last'] = fee_growth_global_1
 
+                # Record rebalance event
+                if has_events:
+                    event_count = record_event(
+                        event_log, event_count, i, j, 4,  # EVENT_REBALANCE=4
+                        current_price, 0.0, 0.0, gas_cost_usd,
+                        float(new_tick_lower), float(new_tick_upper),
+                    )
+
             # Copy forward for next iteration
             if i < n_swaps - 1:
                 positions[i+1, j] = positions[i, j]
 
-    return positions, sqrt_price_history, tick_history
+    return positions, sqrt_price_history, tick_history, event_log, event_count
 
 
 class UniswapV3Simulator(BaseAMMSimulator):
@@ -1167,8 +1219,26 @@ class UniswapV3Simulator(BaseAMMSimulator):
             0.0,  # Initial fee_growth_global_1
         )
 
+        # Extract gas costs and rebalance strategies
+        gas_costs = strategy_params['gas_cost_usd'].astype(np.float64)
+        if 'rebalance_strategy' in strategy_params.dtype.names:
+            rebalance_strategies = strategy_params['rebalance_strategy'].astype(np.int32)
+        else:
+            rebalance_strategies = np.zeros(n_strategies, dtype=np.int32)  # STATIC default
+
+        # Dynamic pool liquidity (empty array if not provided)
+        if 'liquidity' in swaps.columns:
+            liquidity_series = swaps['liquidity'].values.astype(np.float64)
+        else:
+            liquidity_series = np.empty(0, dtype=np.float64)
+
+        # Event log (empty array = disabled)
+        from ammbt.portfolio.events import EVENT_DTYPE
+        event_log = self._event_log if hasattr(self, '_event_log') else np.empty(0, dtype=EVENT_DTYPE)
+        event_count = 0
+
         # Run simulation
-        positions, sqrt_price_hist, tick_hist = _simulate_v3_swaps_nb(
+        positions, sqrt_price_hist, tick_hist, event_log, event_count = _simulate_v3_swaps_nb(
             amount0,
             amount1,
             positions,
@@ -1177,12 +1247,17 @@ class UniswapV3Simulator(BaseAMMSimulator):
             fee_tier,
             rebalance_threshold,
             rebalance_frequency,
+            gas_costs,
+            rebalance_strategies,
+            liquidity_series,
             tick_indices,
             liquidity_net,
             fee_growth_outside_0,
             fee_growth_outside_1,
             num_initialized_ticks,
             tick_spacing,
+            event_log,
+            event_count,
         )
 
         # Convert sqrt prices to regular prices
@@ -1193,5 +1268,9 @@ class UniswapV3Simulator(BaseAMMSimulator):
             'price_history': price_hist,
             'tick_history': tick_hist,
         }
+
+        if len(event_log) > 0:
+            metadata['event_log'] = event_log
+            metadata['event_count'] = event_count
 
         return positions, metadata

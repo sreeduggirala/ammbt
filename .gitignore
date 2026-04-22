@@ -38,8 +38,9 @@ env/
 venv/
 ENV/
 
-# Data
+# Data (but not the ammbt/data package)
 data/
+!ammbt/data/
 *.csv
 *.parquet
 *.h5

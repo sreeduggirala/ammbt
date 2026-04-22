@@ -20,6 +20,7 @@ STRATEGY_PARAM_DTYPE_V2 = np.dtype([
     ('initial_capital', 'f8'),
     ('rebalance_threshold', 'f8'),
     ('rebalance_frequency', 'i4'),
+    ('gas_cost_usd', 'f8'),
 ])
 
 STRATEGY_PARAM_DTYPE_V3 = np.dtype([
@@ -28,6 +29,7 @@ STRATEGY_PARAM_DTYPE_V3 = np.dtype([
     ('tick_upper', 'i4'),
     ('rebalance_threshold', 'f8'),
     ('rebalance_frequency', 'i4'),
+    ('gas_cost_usd', 'f8'),
 ])
 
 STRATEGY_PARAM_DTYPE_DLMM = np.dtype([
@@ -37,6 +39,7 @@ STRATEGY_PARAM_DTYPE_DLMM = np.dtype([
     ('liquidity_shape', 'i4'),  # 0=Spot, 1=Curve, 2=Bid-Ask
     ('rebalance_threshold', 'f8'),
     ('rebalance_frequency', 'i4'),
+    ('gas_cost_usd', 'f8'),
 ])
 
 
@@ -126,6 +129,36 @@ class BacktestResult:
 
         return df
 
+    def get_events(self) -> pd.DataFrame:
+        """
+        Get recorded events as a DataFrame.
+
+        Only available if ``record_events=True`` was passed to
+        ``LPBacktester.run()``.
+
+        Returns
+        -------
+        pd.DataFrame
+            Event log with columns: swap_idx, strategy_idx, event_type,
+            event_name, price, token0_amount, token1_amount, gas_cost,
+            extra_0, extra_1.
+
+        Raises
+        ------
+        ValueError
+            If events were not recorded.
+        """
+        if 'event_log' not in self.metadata:
+            raise ValueError(
+                "No events recorded. Run backtest with record_events=True."
+            )
+
+        from ammbt.portfolio.events import events_to_dataframe
+        return events_to_dataframe(
+            self.metadata['event_log'],
+            self.metadata['event_count'],
+        )
+
     def __repr__(self) -> str:
         n_strategies = len(self.metrics)
         best_pnl = self.metrics['net_pnl'].max()
@@ -193,6 +226,7 @@ class LPBacktester:
         self,
         swaps: pd.DataFrame,
         strategies: Union[Dict[str, List], pd.DataFrame],
+        record_events: bool = False,
     ) -> BacktestResult:
         """
         Run backtest.
@@ -235,6 +269,9 @@ class LPBacktester:
             strategy_df = strategies
             n_strategies = len(strategy_df)
 
+        # Default gas costs per AMM type
+        _default_gas = {'v2': 50.0, 'v3': 100.0, 'dlmm': 0.5}
+
         # Convert to structured array based on AMM type
         if self.amm_type == 'v2':
             strategy_params = np.zeros(n_strategies, dtype=STRATEGY_PARAM_DTYPE_V2)
@@ -259,6 +296,14 @@ class LPBacktester:
         else:
             raise NotImplementedError(f"AMM type '{self.amm_type}' not supported")
 
+        # Set gas cost (user-specified or default for AMM type)
+        if 'gas_cost_usd' in strategy_df.columns:
+            strategy_params['gas_cost_usd'] = strategy_df['gas_cost_usd'].values
+        else:
+            strategy_params['gas_cost_usd'] = np.full(
+                n_strategies, _default_gas.get(self.amm_type, 50.0)
+            )
+
         # Validate swaps data
         required_cols = ['amount0', 'amount1']
         for col in required_cols:
@@ -266,6 +311,40 @@ class LPBacktester:
                 raise ValueError(f"Missing required column: {col}")
 
         n_swaps = len(swaps)
+
+        # Validate inputs
+        if n_swaps == 0:
+            raise ValueError("swaps DataFrame must not be empty")
+
+        for j in range(n_strategies):
+            if strategy_params[j]['initial_capital'] <= 0:
+                raise ValueError(
+                    f"Strategy {j}: initial_capital must be positive, "
+                    f"got {strategy_params[j]['initial_capital']}"
+                )
+
+        if self.amm_type == 'v3':
+            for j in range(n_strategies):
+                if strategy_params[j]['tick_lower'] >= strategy_params[j]['tick_upper']:
+                    raise ValueError(
+                        f"Strategy {j}: tick_lower ({strategy_params[j]['tick_lower']}) "
+                        f"must be less than tick_upper ({strategy_params[j]['tick_upper']})"
+                    )
+
+        if self.amm_type == 'dlmm':
+            for j in range(n_strategies):
+                if strategy_params[j]['bin_lower'] >= strategy_params[j]['bin_upper']:
+                    raise ValueError(
+                        f"Strategy {j}: bin_lower ({strategy_params[j]['bin_lower']}) "
+                        f"must be less than bin_upper ({strategy_params[j]['bin_upper']})"
+                    )
+
+        # Allocate event log if recording is enabled
+        if record_events:
+            from ammbt.portfolio.events import allocate_event_log
+            self.simulator._event_log = allocate_event_log(n_swaps, n_strategies)
+        elif hasattr(self.simulator, '_event_log'):
+            del self.simulator._event_log
 
         # Initialize positions
         positions = self.simulator.initialize_positions(
@@ -293,16 +372,21 @@ class LPBacktester:
         else:
             raise ValueError("No price data available in swaps or metadata")
 
-        # Calculate metrics
+        # Store AMM type in metadata for downstream use
+        metadata['amm_type'] = self.amm_type
+
+        # Calculate metrics (AMM-type-aware)
         metrics = calculate_metrics(
             positions,
             prices,
             strategy_params['initial_capital'],
+            amm_type=self.amm_type,
         )
 
         capital_efficiency = calculate_capital_efficiency(
             positions,
             prices,
+            amm_type=self.amm_type,
         )
 
         # Combine metrics

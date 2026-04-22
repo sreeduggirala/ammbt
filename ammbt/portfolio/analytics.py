@@ -105,6 +105,7 @@ def calculate_metrics(
     positions: np.ndarray,
     prices: np.ndarray,
     initial_capital: np.ndarray,
+    amm_type: str = 'v3',
 ) -> pd.DataFrame:
     """
     Calculate comprehensive performance metrics (vectorized).
@@ -152,17 +153,26 @@ def calculate_metrics(
         # Final position state
         final_pos = positions[-1, j]
 
-        # Calculate final value
-        final_value = calculate_position_value(
-            final_pos['token0_balance'],
-            final_pos['token1_balance'],
-            final_pos['uncollected_fees_0'],
-            final_pos['uncollected_fees_1'],
-            final_price,
-        )
+        # Calculate final value (AMM-type-aware)
+        if amm_type == 'v2':
+            # V2: fees auto-compound into reserves, so token balances already
+            # include fees. uncollected_fees_0/1 are cumulative trackers only.
+            final_value = (
+                final_pos['token0_balance'] * final_price +
+                final_pos['token1_balance']
+            )
+        else:
+            # V3/DLMM: uncollected fees are real uncollected value
+            final_value = calculate_position_value(
+                final_pos['token0_balance'],
+                final_pos['token1_balance'],
+                final_pos['uncollected_fees_0'],
+                final_pos['uncollected_fees_1'],
+                final_price,
+            )
         final_values[j] = final_value
 
-        # Total fees
+        # Total fees (informational — cumulative tracker for all AMM types)
         total_fees[j] = (
             final_pos['uncollected_fees_0'] * final_price +
             final_pos['uncollected_fees_1']
@@ -177,9 +187,8 @@ def calculate_metrics(
         )
         hold_values[j] = hold_value
 
-        # Impermanent loss
-        lp_value_without_fees = final_value - total_fees[j]
-        il[j] = calculate_impermanent_loss(lp_value_without_fees, hold_value)
+        # Impermanent loss: compare LP value vs hold value directly
+        il[j] = calculate_impermanent_loss(final_value, hold_value)
 
         # PnL
         gross_pnl[j] = final_value - initial_capital[j]
@@ -191,13 +200,20 @@ def calculate_metrics(
 
     for j in range(n_strategies):
         for i in range(n_swaps):
-            values_series[i, j] = calculate_position_value(
-                positions[i, j]['token0_balance'],
-                positions[i, j]['token1_balance'],
-                positions[i, j]['uncollected_fees_0'],
-                positions[i, j]['uncollected_fees_1'],
-                prices[i],
-            )
+            if amm_type == 'v2':
+                # V2: fees already in token balances
+                values_series[i, j] = (
+                    positions[i, j]['token0_balance'] * prices[i] +
+                    positions[i, j]['token1_balance']
+                )
+            else:
+                values_series[i, j] = calculate_position_value(
+                    positions[i, j]['token0_balance'],
+                    positions[i, j]['token1_balance'],
+                    positions[i, j]['uncollected_fees_0'],
+                    positions[i, j]['uncollected_fees_1'],
+                    prices[i],
+                )
 
         # Calculate returns
         for i in range(1, n_swaps):
@@ -232,6 +248,72 @@ def calculate_metrics(
     # Total return
     total_return = (final_values - initial_capital) / initial_capital
 
+    # VaR (Value at Risk) at 95% and 99% confidence
+    if n_swaps > 2:
+        var_95 = np.percentile(returns_series, 5, axis=0)
+        var_99 = np.percentile(returns_series, 1, axis=0)
+    else:
+        var_95 = np.zeros(n_strategies)
+        var_99 = np.zeros(n_strategies)
+
+    # CVaR (Conditional VaR / Expected Shortfall)
+    cvar_95 = np.zeros(n_strategies)
+    cvar_99 = np.zeros(n_strategies)
+    for j in range(n_strategies):
+        mask_95 = returns_series[:, j] <= var_95[j]
+        if mask_95.any():
+            cvar_95[j] = returns_series[mask_95, j].mean()
+        else:
+            cvar_95[j] = var_95[j]
+        mask_99 = returns_series[:, j] <= var_99[j]
+        if mask_99.any():
+            cvar_99[j] = returns_series[mask_99, j].mean()
+        else:
+            cvar_99[j] = var_99[j]
+
+    # Calmar ratio (return / max drawdown)
+    calmar = np.where(max_drawdown != 0, total_return / np.abs(max_drawdown), 0.0)
+
+    # Omega ratio (sum of gains / sum of losses)
+    omega = np.zeros(n_strategies)
+    for j in range(n_strategies):
+        gains = returns_series[returns_series[:, j] > 0, j].sum()
+        losses = abs(returns_series[returns_series[:, j] < 0, j].sum())
+        omega[j] = gains / losses if losses > 0 else 0.0
+
+    # Win rate
+    n_returns = max(n_swaps - 1, 1)
+    win_rate = (returns_series > 0).sum(axis=0) / n_returns
+
+    # Profit factor (gross gains / gross losses)
+    profit_factor = np.zeros(n_strategies)
+    for j in range(n_strategies):
+        gains = returns_series[returns_series[:, j] > 0, j].sum()
+        losses = abs(returns_series[returns_series[:, j] < 0, j].sum())
+        profit_factor[j] = gains / losses if losses > 0 else 0.0
+
+    # Recovery time (swaps from max drawdown to recovery)
+    recovery_time = np.zeros(n_strategies, dtype=np.int32)
+    for j in range(n_strategies):
+        dd_idx = np.argmin(drawdowns[:, j])
+        peak_before = cummax[dd_idx, j]
+        recovered = False
+        for k in range(dd_idx, n_swaps):
+            if values_series[k, j] >= peak_before:
+                recovery_time[j] = k - dd_idx
+                recovered = True
+                break
+        if not recovered:
+            recovery_time[j] = n_swaps - dd_idx
+
+    # HODL comparison
+    hodl_return = np.where(
+        initial_capital > 0,
+        (hold_values - initial_capital) / initial_capital,
+        0.0,
+    )
+    lp_vs_hodl = total_return - hodl_return
+
     # Assemble metrics DataFrame
     metrics_df = pd.DataFrame({
         'final_value': final_values,
@@ -249,6 +331,17 @@ def calculate_metrics(
         'total_return': total_return,
         'total_return_pct': total_return * 100,
         'hold_value': hold_values,
+        'var_95': var_95,
+        'var_99': var_99,
+        'cvar_95': cvar_95,
+        'cvar_99': cvar_99,
+        'calmar': calmar,
+        'omega': omega,
+        'win_rate': win_rate,
+        'profit_factor': profit_factor,
+        'recovery_time': recovery_time,
+        'hodl_return': hodl_return,
+        'lp_vs_hodl': lp_vs_hodl,
     })
 
     return metrics_df
@@ -257,6 +350,7 @@ def calculate_metrics(
 def calculate_capital_efficiency(
     positions: np.ndarray,
     prices: np.ndarray,
+    amm_type: str = 'v3',
 ) -> pd.DataFrame:
     """
     Calculate capital efficiency metrics.
@@ -285,23 +379,27 @@ def calculate_capital_efficiency(
     utilization = np.zeros(n_strategies)
 
     for j in range(n_strategies):
-        initial_value = calculate_position_value(
-            positions[0, j]['token0_balance'],
-            positions[0, j]['token1_balance'],
-            0, 0,
-            prices[0],
+        initial_value = (
+            positions[0, j]['token0_balance'] * prices[0] +
+            positions[0, j]['token1_balance']
         )
 
         if initial_value > 0:
             avg_value = 0
             for i in range(n_swaps):
-                value = calculate_position_value(
-                    positions[i, j]['token0_balance'],
-                    positions[i, j]['token1_balance'],
-                    positions[i, j]['uncollected_fees_0'],
-                    positions[i, j]['uncollected_fees_1'],
-                    prices[i],
-                )
+                if amm_type == 'v2':
+                    value = (
+                        positions[i, j]['token0_balance'] * prices[i] +
+                        positions[i, j]['token1_balance']
+                    )
+                else:
+                    value = calculate_position_value(
+                        positions[i, j]['token0_balance'],
+                        positions[i, j]['token1_balance'],
+                        positions[i, j]['uncollected_fees_0'],
+                        positions[i, j]['uncollected_fees_1'],
+                        prices[i],
+                    )
                 avg_value += value / n_swaps
 
             utilization[j] = avg_value / initial_value
